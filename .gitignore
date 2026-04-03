@@ -31,3 +31,6 @@ build/
 
 ### VS Code ###
 .vscode/
+
+# Local secrets (optional): spring.config.additional-location=optional:file:./application-local.properties
+application-local.properties
