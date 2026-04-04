@@ -6,24 +6,27 @@ import com.scai.customer_portal.domain.AppUser;
 import com.scai.customer_portal.domain.Issue;
 import com.scai.customer_portal.domain.IssueStatus;
 import com.scai.customer_portal.domain.Organization;
-import com.scai.customer_portal.domain.Pod;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
 import java.time.LocalDate;
-import java.time.OffsetDateTime;
-import java.time.format.DateTimeParseException;
 
 @Component
 public class JiraIssueMapper {
 
 	private final JiraProperties jiraProperties;
+	private final JiraRemoteService jiraRemoteService;
 
-	public JiraIssueMapper(JiraProperties jiraProperties) {
+	public JiraIssueMapper(JiraProperties jiraProperties, JiraRemoteService jiraRemoteService) {
 		this.jiraProperties = jiraProperties;
+		this.jiraRemoteService = jiraRemoteService;
 	}
 
-	public void applyJsonToIssue(Issue target, JsonNode root, Organization organization, Pod pod, AppUser createdBy, String snapshotJson) {
+	public static String jiraUserEmail(JsonNode fields, String fieldKey) {
+		return fields.path(fieldKey).path("emailAddress").asText(null);
+	}
+
+	public void applyJsonToIssue(Issue target, JsonNode root, Organization organization, AppUser createdBy, String snapshotJson) {
 		JsonNode fields = root.path("fields");
 		String key = root.path("key").asText(null);
 		String id = root.path("id").asText(null);
@@ -31,8 +34,13 @@ public class JiraIssueMapper {
 		target.setJiraIssueId(id);
 		target.setTitle(fields.path("summary").asText("(no summary)"));
 		target.setDescription(extractDescription(fields));
-		target.setIssueDate(parseDate(fields.path("created").asText(null)));
-		target.setClosingDate(parseDate(fields.path("resolutiondate").asText(null)));
+		LocalDate issueDate = JiraDateParsing.parseLocalDate(JiraDateParsing.timestampText(fields, "created"));
+		if (issueDate == null) {
+			issueDate = JiraDateParsing.parseLocalDate(JiraDateParsing.timestampText(fields, "updated"));
+		}
+		target.setIssueDate(issueDate);
+		LocalDate closingDate = JiraDateParsing.parseLocalDate(JiraDateParsing.timestampText(fields, "resolutiondate"));
+		target.setClosingDate(closingDate);
 		target.setJiraStatus(fields.path("status").path("name").asText(null));
 		target.setPortalStatus(mapPortalStatus(target.getJiraStatus()));
 		target.setSeverity(mapSeverity(fields.path("priority").path("name").asText(null)));
@@ -41,7 +49,7 @@ public class JiraIssueMapper {
 			module = joinComponentNames(fields.path("components"));
 		}
 		target.setModule(module);
-		target.setEnvironment(readCustomField(fields, jiraProperties.environmentFieldId()));
+		target.setEnvironment(jiraRemoteService.extractEnvironmentValueFromFields(fields));
 		String category = readCustomField(fields, jiraProperties.categoryFieldId());
 		if (category == null || category.isBlank()) {
 			category = fields.path("issuetype").path("name").asText(null);
@@ -51,8 +59,18 @@ public class JiraIssueMapper {
 		}
 		target.setCategory(category);
 		target.setOrganization(organization);
-		target.setPod(pod);
-		if (target.getCreatedBy() == null) {
+		String rcaFieldId = jiraProperties.rcaFieldId();
+		if (rcaFieldId != null && !rcaFieldId.isBlank()) {
+			String fromJiraRca = readCustomField(fields, rcaFieldId);
+			target.setRcaDescription(fromJiraRca != null && !fromJiraRca.isBlank() ? fromJiraRca.trim() : null);
+		}
+		JsonNode reporter = fields.path("reporter");
+		if (!reporter.isMissingNode() && !reporter.isNull()) {
+			target.setJiraReporterEmail(reporter.path("emailAddress").asText(null));
+			target.setJiraReporterDisplayName(reporter.path("displayName").asText(null));
+			target.setJiraReporterAccountId(reporter.path("accountId").asText(null));
+		}
+		if (target.getCreatedBy() == null && createdBy != null) {
 			target.setCreatedBy(createdBy);
 		}
 		target.setLastSyncedAt(Instant.now());
@@ -100,19 +118,7 @@ public class JiraIssueMapper {
 			return null;
 		}
 		JsonNode n = fields.get(fieldId);
-		if (n == null || n.isNull()) {
-			return null;
-		}
-		if (n.isTextual()) {
-			return n.asText();
-		}
-		if (n.isObject() && n.has("value")) {
-			return n.path("value").asText(null);
-		}
-		if (n.isObject() && n.has("name")) {
-			return n.path("name").asText(null);
-		}
-		return n.toString();
+		return JiraFieldValueTexts.toDisplayString(n);
 	}
 
 	private static String extractDescription(JsonNode fields) {
@@ -123,24 +129,11 @@ public class JiraIssueMapper {
 		if (desc.isTextual()) {
 			return desc.asText();
 		}
+		String plain = JiraFieldValueTexts.toDisplayString(desc);
+		if (plain != null && !plain.isBlank()) {
+			return plain;
+		}
 		return desc.toString();
-	}
-
-	private static LocalDate parseDate(String iso) {
-		if (iso == null || iso.isBlank()) {
-			return null;
-		}
-		try {
-			return OffsetDateTime.parse(iso).toLocalDate();
-		}
-		catch (DateTimeParseException e) {
-			try {
-				return Instant.parse(iso).atZone(java.time.ZoneOffset.UTC).toLocalDate();
-			}
-			catch (Exception ex) {
-				return null;
-			}
-		}
 	}
 
 	private static Integer mapSeverity(String priorityName) {

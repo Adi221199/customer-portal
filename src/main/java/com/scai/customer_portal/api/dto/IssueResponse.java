@@ -27,8 +27,12 @@ public record IssueResponse(
 		String podName,
 		UUID assigneeId,
 		String assigneeEmail,
-		UUID createdById,
-		String createdByEmail,
+		UUID portalReporterId,
+		String portalReporterEmail,
+		String jiraReporterEmail,
+		String jiraReporterDisplayName,
+		UUID importedById,
+		String importedByEmail,
 		Instant lastSyncedAt
 ) {
 }

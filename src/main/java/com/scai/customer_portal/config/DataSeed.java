@@ -46,6 +46,7 @@ public class DataSeed implements ApplicationRunner {
 		if (appUserRepository.count() > 0) {
 			return;
 		}
+		organizationRepository.save(Organization.builder().name(DefaultInternalOrganizationBootstrap.INTERNAL_ORG_NAME).build());
 		Organization acme = organizationRepository.save(Organization.builder().name("Acme Corp").build());
 		organizationRepository.save(Organization.builder().name("Globex").build());
 		Pod pod = podRepository.save(Pod.builder().name("Delivery Pod 1").build());

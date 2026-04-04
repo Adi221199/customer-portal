@@ -9,7 +9,11 @@ public record JiraProperties(
 		String apiToken,
 		String moduleFieldId,
 		String environmentFieldId,
-		String categoryFieldId
+		String categoryFieldId,
+		/** Optional: Jira custom field whose value matches a portal pod name (e.g. EDM, DPAI). */
+		String podFieldId,
+		/** Optional: Jira custom field for RCA / root-cause text (plain or Atlassian Document Format). */
+		String rcaFieldId
 ) {
 
 	/** API token + Atlassian account email (integration user — not per portal end-user). */
