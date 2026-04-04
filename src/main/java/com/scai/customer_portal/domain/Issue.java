@@ -82,6 +82,21 @@ public class Issue {
 	@JoinColumn(name = "assignee_id")
 	private AppUser assignee;
 
+	/** Portal user whose email matches Jira reporter (ticket creator in Jira). Used for SC_AGENT visibility. */
+	@ManyToOne(fetch = FetchType.LAZY)
+	@JoinColumn(name = "portal_reporter_id")
+	private AppUser portalReporter;
+
+	@Column(name = "jira_reporter_email")
+	private String jiraReporterEmail;
+
+	@Column(name = "jira_reporter_display_name")
+	private String jiraReporterDisplayName;
+
+	@Column(name = "jira_reporter_account_id")
+	private String jiraReporterAccountId;
+
+	/** User who ran import in the portal (audit). */
 	@ManyToOne(fetch = FetchType.LAZY, optional = false)
 	@JoinColumn(name = "created_by_id", nullable = false)
 	private AppUser createdBy;

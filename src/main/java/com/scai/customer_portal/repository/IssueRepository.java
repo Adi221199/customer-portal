@@ -3,6 +3,7 @@ package com.scai.customer_portal.repository;
 import com.scai.customer_portal.domain.Issue;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
 
 import java.util.List;
 import java.util.Optional;
@@ -12,11 +13,14 @@ public interface IssueRepository extends JpaRepository<Issue, UUID> {
 
 	Optional<Issue> findByJiraIssueKey(String jiraIssueKey);
 
-	@EntityGraph(attributePaths = { "organization", "pod", "assignee", "createdBy" })
+	@Query("select i.id from Issue i where i.jiraIssueKey is not null")
+	List<UUID> findAllIdsWithJiraIssueKey();
+
+	@EntityGraph(attributePaths = { "organization", "pod", "assignee", "createdBy", "portalReporter" })
 	@Override
 	List<Issue> findAll();
 
-	@EntityGraph(attributePaths = { "organization", "pod", "assignee", "createdBy" })
+	@EntityGraph(attributePaths = { "organization", "pod", "assignee", "createdBy", "portalReporter" })
 	@Override
 	Optional<Issue> findById(UUID id);
 

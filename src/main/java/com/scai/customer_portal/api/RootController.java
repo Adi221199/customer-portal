@@ -18,7 +18,7 @@ public class RootController {
 		m.put("register", "POST /api/auth/register");
 		m.put("login", "POST /api/auth/login");
 		m.put("me", "GET /api/auth/me (Bearer token)");
-		m.put("issues", "GET /api/issues (Bearer token)");
+		m.put("issues", "GET /api/issues; POST import-jira; POST {id}/sync-from-jira (Bearer)");
 		m.put("adminPods", "GET|POST /api/admin/pods (Bearer SC_ADMIN)");
 		return m;
 	}
