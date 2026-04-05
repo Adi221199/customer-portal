@@ -26,6 +26,39 @@ public class JiraIssueMapper {
 		return fields.path(fieldKey).path("emailAddress").asText(null);
 	}
 
+	/**
+	 * Cron / background sync: status-like fields only. Does not touch customer/org, pod, env, module, category,
+	 * RCA, reporter, assignee, description, issue date, etc., so portal values are not replaced by Jira nulls/omissions.
+	 */
+	public void applyBackgroundProgressFromJira(Issue target, JsonNode root, String snapshotJson) {
+		JsonNode fields = root.path("fields");
+		String key = root.path("key").asText(null);
+		String id = root.path("id").asText(null);
+		if (key != null && !key.isBlank()) {
+			target.setJiraIssueKey(key);
+		}
+		if (id != null && !id.isBlank()) {
+			target.setJiraIssueId(id);
+		}
+		String summary = fields.path("summary").asText(null);
+		if (summary != null && !summary.isBlank()) {
+			target.setTitle(summary.trim());
+		}
+		String jiraStatusName = fields.path("status").path("name").asText(null);
+		target.setJiraStatus(jiraStatusName);
+		target.setPortalStatus(mapPortalStatus(jiraStatusName));
+		LocalDate closing = JiraDateParsing.parseLocalDate(JiraDateParsing.timestampText(fields, "resolutiondate"));
+		if (closing != null) {
+			target.setClosingDate(closing);
+		}
+		String priorityName = fields.path("priority").path("name").asText(null);
+		if (priorityName != null && !priorityName.isBlank()) {
+			target.setSeverity(mapSeverity(priorityName));
+		}
+		target.setLastSyncedAt(Instant.now());
+		target.setJiraSnapshotJson(snapshotJson);
+	}
+
 	public void applyJsonToIssue(Issue target, JsonNode root, Organization organization, AppUser createdBy, String snapshotJson) {
 		JsonNode fields = root.path("fields");
 		String key = root.path("key").asText(null);

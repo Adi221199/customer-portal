@@ -2,6 +2,7 @@ package com.scai.customer_portal.api.dto;
 
 import com.scai.customer_portal.domain.PortalRole;
 
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
@@ -12,8 +13,7 @@ public record UserResponse(
 		boolean enabled,
 		UUID organizationId,
 		String organizationName,
-		UUID podId,
-		String podName,
+		List<AssignedPodRef> pods,
 		Set<PortalRole> roles
 ) {
 }

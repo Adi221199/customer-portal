@@ -1,26 +1,20 @@
 package com.scai.customer_portal.api.dto;
 
-import com.scai.customer_portal.domain.IssueStatus;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.Size;
 
-import java.util.UUID;
+import java.time.LocalDate;
 
-/**
- * Partial update. Use {@code unassignAssignee} / {@code clearPod} / {@code clearRcaDescription} to clear.
- * {@code module}, {@code environment}, {@code category}: non-null value applies (blank string clears the field).
- */
+/** Gap-fill patch: each property applies only if the issue value is still empty (see service rules). */
 public record IssuePatchRequest(
-		UUID organizationId,
-		UUID assigneeId,
-		Boolean unassignAssignee,
-		UUID podId,
-		Boolean clearPod,
-		UUID portalReporterUserId,
-		Boolean clearPortalReporter,
+		LocalDate closingDate,
+		@Size(max = 500) String module,
+		@Size(max = 200) String environment,
+		@Size(max = 200) String category,
+		@Min(1) @Max(3) Integer severity,
 		String rcaDescription,
-		Boolean clearRcaDescription,
-		IssueStatus portalStatus,
-		String module,
-		String environment,
-		String category
+		@Size(max = 200) String organizationName,
+		@Size(max = 200) String podName
 ) {
 }

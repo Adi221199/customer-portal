@@ -11,8 +11,9 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * Periodically re-fetches every issue that has a Jira key so portal rows stay aligned with Jira
- * (new customer, status, description, etc.). Disabled unless {@code jira.background-sync-enabled=true}.
+ * Periodically re-fetches Jira-linked issues and applies <strong>progress-only</strong> updates (status, summary,
+ * resolution date, priority). Customer/org, pod, env, module, RCA, assignee, description, etc. are left unchanged
+ * so portal-filled fields are not wiped when Jira omits them. Disabled unless {@code jira.background-sync-enabled=true}.
  */
 @Component
 @ConditionalOnProperty(name = "jira.background-sync-enabled", havingValue = "true")

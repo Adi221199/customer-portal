@@ -46,9 +46,7 @@ public class AuthService {
 		if (appUserRepository.existsByEmailIgnoreCase(request.email())) {
 			throw new IllegalArgumentException("Email already registered");
 		}
-		Organization org = organizationRepository.findByNameIgnoreCase(request.organizationName().trim())
-				.orElseGet(() -> organizationRepository.save(
-						Organization.builder().name(request.organizationName().trim()).build()));
+		Organization org = resolveOrganizationForRegistration(request.organizationName());
 		AppUser user = AppUser.builder()
 				.email(request.email().trim().toLowerCase())
 				.passwordHash(passwordEncoder.encode(request.password()))
@@ -59,6 +57,15 @@ public class AuthService {
 				.build();
 		user = appUserRepository.save(user);
 		return userResponseMapper.toResponse(user);
+	}
+
+	private Organization resolveOrganizationForRegistration(String organizationName) {
+		if (organizationName == null || organizationName.isBlank()) {
+			return null;
+		}
+		String name = organizationName.trim();
+		return organizationRepository.findByNameIgnoreCase(name)
+				.orElseGet(() -> organizationRepository.save(Organization.builder().name(name).build()));
 	}
 
 	@Transactional(readOnly = true)

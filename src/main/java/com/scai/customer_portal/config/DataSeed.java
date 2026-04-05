@@ -16,6 +16,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.HashSet;
 import java.util.Set;
 
 @Component
@@ -57,7 +58,7 @@ public class DataSeed implements ApplicationRunner {
 				.displayName("3SC Admin")
 				.enabled(true)
 				.organization(null)
-				.pod(null)
+				.pods(new HashSet<>())
 				.roles(Set.of(PortalRole.SC_ADMIN))
 				.build();
 		appUserRepository.save(admin);
@@ -68,7 +69,7 @@ public class DataSeed implements ApplicationRunner {
 				.displayName("3SC Lead")
 				.enabled(true)
 				.organization(null)
-				.pod(pod)
+				.pods(new HashSet<>(Set.of(pod)))
 				.roles(Set.of(PortalRole.SC_LEAD))
 				.build();
 		appUserRepository.save(lead);
@@ -79,7 +80,7 @@ public class DataSeed implements ApplicationRunner {
 				.displayName("Acme Admin")
 				.enabled(true)
 				.organization(acme)
-				.pod(null)
+				.pods(new HashSet<>())
 				.roles(Set.of(PortalRole.CUSTOMER_ADMIN))
 				.build();
 		appUserRepository.save(custAdmin);

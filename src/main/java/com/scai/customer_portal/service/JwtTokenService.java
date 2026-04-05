@@ -39,8 +39,9 @@ public class JwtTokenService {
 		if (user.getOrganization() != null) {
 			claims.claim("organizationId", user.getOrganization().getId().toString());
 		}
-		if (user.getPod() != null) {
-			claims.claim("podId", user.getPod().getId().toString());
+		if (user.getPods() != null && !user.getPods().isEmpty()) {
+			List<String> podIds = user.getPods().stream().map(p -> p.getId().toString()).sorted().toList();
+			claims.claim("podIds", podIds);
 		}
 		JwsHeader header = JwsHeader.with(MacAlgorithm.HS256).build();
 		return this.jwtEncoder.encode(JwtEncoderParameters.from(header, claims.build())).getTokenValue();
