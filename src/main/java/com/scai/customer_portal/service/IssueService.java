@@ -16,10 +16,10 @@ import com.scai.customer_portal.repository.IssueRepository;
 import com.scai.customer_portal.repository.OrganizationRepository;
 import com.scai.customer_portal.repository.PodRepository;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Optional;
@@ -102,8 +102,9 @@ public class IssueService {
 	}
 
 	/**
-	 * Background job: refresh one issue from Jira using internal org resolution (Customer field → org, else 3SC).
-	 * Does not change {@link Issue#getCreatedBy()}.
+	 * Background job: refresh progress fields from Jira (status, summary when present, resolution date, priority).
+	 * Does not overwrite organization, pod, env/module/category, RCA, reporter, assignee, description, etc.
+	 * Does not change {@link Issue#getCreatedBy()}. Use {@link #syncIssueFromJira} for a full re-import.
 	 */
 	@Transactional
 	public void syncImportedIssueFromJiraForBackground(UUID issueId) {
@@ -120,12 +121,7 @@ public class IssueService {
 		}
 		JsonNode root = jiraRemoteService.fetchIssue(key);
 		String snapshot = serializeJiraSnapshot(root);
-		JsonNode fields = root.path("fields");
-		Organization org = resolveOrganizationFromJiraInternal(fields);
-		jiraIssueMapper.applyJsonToIssue(issue, root, org, null, snapshot);
-		applyPodFromJira(fields, issue, null);
-		issue.setAssignee(resolvePortalUserByEmail(JiraIssueMapper.jiraUserEmail(fields, "assignee")));
-		issue.setPortalReporter(resolvePortalUserByEmail(issue.getJiraReporterEmail()));
+		jiraIssueMapper.applyBackgroundProgressFromJira(issue, root, snapshot);
 		issueRepository.save(issue);
 	}
 
@@ -223,15 +219,18 @@ public class IssueService {
 			return;
 		}
 		if (actor.getRoles().contains(PortalRole.SC_LEAD) || actor.getRoles().contains(PortalRole.SC_AGENT)) {
-			Pod actorPod = actor.getPod();
-			if (fromJira != null && actorPod != null && fromJira.getId().equals(actorPod.getId())) {
+			var actorPods = actor.getPods();
+			if (fromJira != null && actor.isAssignedToPod(fromJira)) {
 				issue.setPod(fromJira);
 			}
-			else if (actorPod != null) {
-				issue.setPod(actorPod);
+			else if (actorPods != null && actorPods.size() == 1) {
+				issue.setPod(actorPods.iterator().next());
+			}
+			else if (actorPods == null || actorPods.isEmpty()) {
+				issue.setPod(fromJira);
 			}
 			else {
-				issue.setPod(fromJira);
+				issue.setPod(null);
 			}
 			return;
 		}
@@ -276,53 +275,14 @@ public class IssueService {
 	@Transactional(readOnly = true)
 	public List<IssueResponse> listForCurrentUser() {
 		AppUser actor = currentUserService.requireCurrentUser();
-		List<Issue> all = issueRepository.findAll();
-		List<Issue> filtered = new ArrayList<>();
-		for (Issue issue : all) {
-			if (canView(actor, issue)) {
-				filtered.add(issue);
-			}
-		}
-		return filtered.stream().map(this::toResponse).toList();
+		return issueRepository.findAll(IssueVisibilitySpecification.visibleTo(actor)).stream()
+				.map(this::toResponse)
+				.toList();
 	}
 
 	private boolean canView(AppUser actor, Issue issue) {
-		if (actor.getRoles().contains(PortalRole.SC_ADMIN)) {
-			return true;
-		}
-		if (actor.getRoles().contains(PortalRole.CUSTOMER_ADMIN)) {
-			return actor.getOrganization() != null
-					&& issue.getOrganization().getId().equals(actor.getOrganization().getId());
-		}
-		if (actor.getRoles().contains(PortalRole.CUSTOMER_USER)) {
-			if (actor.getOrganization() == null) {
-				return false;
-			}
-			if (!issue.getOrganization().getId().equals(actor.getOrganization().getId())) {
-				return false;
-			}
-			if (issue.getCreatedBy().getId().equals(actor.getId())) {
-				return true;
-			}
-			if (issue.getAssignee() != null && issue.getAssignee().getId().equals(actor.getId())) {
-				return true;
-			}
-			// Register flow creates CUSTOMER_USER; Jira reporter is rarely createdBy/assignee on import.
-			return jiraReporterMatchesPortalUser(actor, issue);
-		}
-		if (actor.getRoles().contains(PortalRole.SC_LEAD)) {
-			if (actor.getPod() == null) {
-				return false;
-			}
-			return issue.getPod() != null && issue.getPod().getId().equals(actor.getPod().getId());
-		}
-		if (actor.getRoles().contains(PortalRole.SC_AGENT)) {
-			if (issue.getPortalReporter() != null && issue.getPortalReporter().getId().equals(actor.getId())) {
-				return true;
-			}
-			return jiraReporterMatchesPortalUser(actor, issue);
-		}
-		return false;
+		return issueRepository.exists(Specification.<Issue>where((root, q, cb) -> cb.equal(root.get("id"), issue.getId()))
+				.and(IssueVisibilitySpecification.visibleTo(actor)));
 	}
 
 	/** True when the logged-in user's email matches Jira {@link Issue#getJiraReporterEmail()} (case-insensitive). */
@@ -345,60 +305,53 @@ public class IssueService {
 		if (!canPatch(actor, issue)) {
 			throw new SecurityException("Not allowed to update this issue");
 		}
-		if (request.organizationId() != null) {
-			Organization o = organizationRepository.findById(request.organizationId())
-					.orElseThrow(() -> new IllegalArgumentException("Organization not found"));
-			issue.setOrganization(o);
+		if (request.organizationName() != null && !request.organizationName().isBlank()) {
+			applyOrganizationNameIfSlotOpen(issue, request.organizationName().trim());
 		}
-		if (Boolean.TRUE.equals(request.unassignAssignee())) {
-			issue.setAssignee(null);
-		}
-		else if (request.assigneeId() != null) {
-			AppUser u = appUserRepository.findById(request.assigneeId())
-					.orElseThrow(() -> new IllegalArgumentException("Assignee user not found"));
-			issue.setAssignee(u);
-		}
-		if (Boolean.TRUE.equals(request.clearPod()) || request.podId() != null) {
+		if (request.podName() != null && !request.podName().isBlank() && issue.getPod() == null) {
 			if (!canMutateIssuePod(actor)) {
 				throw new SecurityException("Not allowed to change pod on this issue");
 			}
-			if (Boolean.TRUE.equals(request.clearPod())) {
-				issue.setPod(null);
-			}
-			else {
-				Pod p = podRepository.findById(request.podId())
-						.orElseThrow(() -> new IllegalArgumentException("Pod not found"));
-				assertPodPatchAllowed(actor, p);
-				issue.setPod(p);
-			}
+			Pod p = podRepository.findByNameIgnoreCase(request.podName().trim())
+					.orElseThrow(() -> new IllegalArgumentException("Pod not found: " + request.podName().trim()));
+			assertPodPatchAllowed(actor, p);
+			issue.setPod(p);
 		}
-		if (Boolean.TRUE.equals(request.clearPortalReporter())) {
-			issue.setPortalReporter(null);
+		if (request.closingDate() != null && issue.getClosingDate() == null) {
+			issue.setClosingDate(request.closingDate());
 		}
-		else if (request.portalReporterUserId() != null) {
-			AppUser rep = appUserRepository.findById(request.portalReporterUserId())
-					.orElseThrow(() -> new IllegalArgumentException("Reporter user not found"));
-			issue.setPortalReporter(rep);
-		}
-		if (Boolean.TRUE.equals(request.clearRcaDescription())) {
-			issue.setRcaDescription(null);
-		}
-		else if (request.rcaDescription() != null) {
-			issue.setRcaDescription(request.rcaDescription());
-		}
-		if (request.portalStatus() != null) {
-			issue.setPortalStatus(request.portalStatus());
-		}
-		if (request.module() != null) {
+		if (request.module() != null && isTextSlotEmpty(issue.getModule())) {
 			issue.setModule(blankToNull(request.module()));
 		}
-		if (request.environment() != null) {
+		if (request.environment() != null && isTextSlotEmpty(issue.getEnvironment())) {
 			issue.setEnvironment(blankToNull(request.environment()));
 		}
-		if (request.category() != null) {
+		if (request.category() != null && isTextSlotEmpty(issue.getCategory())) {
 			issue.setCategory(blankToNull(request.category()));
 		}
+		if (request.severity() != null && issue.getSeverity() == null) {
+			issue.setSeverity(request.severity());
+		}
+		if (request.rcaDescription() != null && isTextSlotEmpty(issue.getRcaDescription())) {
+			issue.setRcaDescription(blankToNull(request.rcaDescription()));
+		}
 		return toResponse(issueRepository.save(issue));
+	}
+
+	private void applyOrganizationNameIfSlotOpen(Issue issue, String name) {
+		Organization cur = issue.getOrganization();
+		boolean open = cur == null
+				|| DefaultInternalOrganizationBootstrap.INTERNAL_ORG_NAME.equalsIgnoreCase(cur.getName());
+		if (!open) {
+			return;
+		}
+		Organization next = organizationRepository.findByNameIgnoreCase(name)
+				.orElseGet(() -> organizationRepository.save(Organization.builder().name(name).build()));
+		issue.setOrganization(next);
+	}
+
+	private static boolean isTextSlotEmpty(String s) {
+		return s == null || s.isBlank();
 	}
 
 	private static String blankToNull(String s) {
@@ -421,9 +374,8 @@ public class IssueService {
 			return;
 		}
 		if (actor.getRoles().contains(PortalRole.SC_LEAD) || actor.getRoles().contains(PortalRole.SC_AGENT)) {
-			Pod ap = actor.getPod();
-			if (ap == null || !ap.getId().equals(targetPod.getId())) {
-				throw new SecurityException("You can only assign issues to your own pod");
+			if (!actor.isAssignedToPod(targetPod)) {
+				throw new SecurityException("You can only assign issues to a pod you are assigned to");
 			}
 			return;
 		}

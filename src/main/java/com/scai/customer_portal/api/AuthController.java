@@ -43,7 +43,7 @@ public class AuthController {
 				.header(HttpHeaders.ALLOW, "POST")
 				.body(Map.of(
 						"error", "Method Not Allowed",
-						"hint", "Use POST /api/auth/register with JSON body: email, password, displayName, organizationName"));
+						"hint", "Use POST /api/auth/register with JSON body: email, password, displayName; organizationName optional (customers fill it, internal users may omit)"));
 	}
 
 	@PostMapping("/register")
