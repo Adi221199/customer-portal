@@ -15,6 +15,7 @@ import com.scai.customer_portal.dashboard.DashboardFacet;
 import com.scai.customer_portal.dashboard.DashboardFilterParams;
 import com.scai.customer_portal.domain.AppUser;
 import com.scai.customer_portal.domain.Issue;
+import com.scai.customer_portal.domain.IssueStatus;
 import com.scai.customer_portal.domain.Organization;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
@@ -84,7 +85,8 @@ public class DashboardService {
 				List.of("ALL", "HAS", "EMPTY", "NO"),
 				distinctCategories(user, params),
 				distinctModules(user, params),
-				distinctJiraTickets(user, params));
+				distinctJiraTickets(user, params),
+				distinctIssueStatuses(user, params));
 	}
 
 	public DashboardChartResponse chart(DashboardChartId chartId, DashboardFilterParams params) {
@@ -404,6 +406,16 @@ public class DashboardService {
 		}
 		out.addAll(sorted);
 		return out;
+	}
+
+	private List<String> distinctIssueStatuses(AppUser user, DashboardFilterParams p) {
+		CriteriaBuilder cb = entityManager.getCriteriaBuilder();
+		CriteriaQuery<IssueStatus> cq = cb.createQuery(IssueStatus.class);
+		Root<Issue> root = cq.from(Issue.class);
+		cq.select(root.get("portalStatus")).distinct(true);
+		cq.where(combined(root, cq, cb, user, p, DashboardFacet.PORTAL_STATUS));
+		cq.orderBy(cb.asc(root.get("portalStatus")));
+		return entityManager.createQuery(cq).getResultList().stream().map(IssueStatus::name).toList();
 	}
 
 	private List<JiraTicketOption> distinctJiraTickets(AppUser user, DashboardFilterParams p) {

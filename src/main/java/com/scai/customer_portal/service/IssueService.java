@@ -20,6 +20,7 @@ import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Comparator;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Optional;
@@ -276,6 +277,7 @@ public class IssueService {
 	public List<IssueResponse> listForCurrentUser() {
 		AppUser actor = currentUserService.requireCurrentUser();
 		return issueRepository.findAll(IssueVisibilitySpecification.visibleTo(actor)).stream()
+				.sorted(Comparator.comparing(Issue::getLastSyncedAt, Comparator.nullsLast(Comparator.reverseOrder())))
 				.map(this::toResponse)
 				.toList();
 	}

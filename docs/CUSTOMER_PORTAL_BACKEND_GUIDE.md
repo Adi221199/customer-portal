@@ -53,7 +53,7 @@ New users who use **public registration** get **CUSTOMER_USER** by default. Inte
 Authorization: Bearer <accessToken>
 ```
 
-Token lifetime is configured by `jwt.expiration-seconds` (e.g. `43200` = 12 hours in default `application.properties`). After expiry, call **login** again (there is no refresh-token flow in this project today).
+Token lifetime is configured by `jwt.expiration-seconds` (e.g. `172800` = 48 hours in default `application.properties`). After expiry, call **login** again (there is no refresh-token flow in this project today).
 
 ### CORS
 
@@ -127,7 +127,7 @@ For **internal 3SC users**, omit `organizationName` or send `null` / `""` — no
 {
   "accessToken": "<jwt>",
   "tokenType": "Bearer",
-  "expiresInSeconds": 43200
+  "expiresInSeconds": 172800
 }
 ```
 
@@ -374,26 +374,29 @@ Allowed strings in JSON:
 
 #### Cross-filtering (frontend pattern — Power BI style)
 
-1. Call **`GET /api/dashboard/filters`** once (or after each slicer change) to load dropdown options.
-2. Call each **chart** endpoint with the **same query-string filters** the user has selected (client, SPOC, month, …).
-3. When the user **clicks a bar** (e.g. client “Jockey”), add that dimension to the query string for **all** subsequent chart requests (e.g. `organizationId=<uuid>`), then refetch every chart.  
-   - Use **`key`** from chart points where documented below (UUID for client, `yyyy-MM` for month, `__BLANK__` for empty env/category, etc.).
+1. Call **`GET /api/dashboard/filters`** with the **current** query string whenever **any** slicer changes **or** after **chart drill** (bar/segment click). Every slicer list is computed using **all other** active filters, so e.g. selecting a client narrows months, environments, modules, etc.
+2. Call each **chart** and **`/aggregate`** with the **identical** query string (same params as step 1).
+3. On chart drill, append the bar’s dimension to the query string, then **refetch `/filters` and every chart** with that full string.  
+   - Use **`key`** from chart points (UUID for client, `yyyy-MM` for month, `__BLANK__` for empty env/category, severity as `1`/`2`/`3`, etc.).
 
-**Slicer behaviour (important):** When building options for one dropdown, the backend **drops that dimension’s filter** but keeps all others — so option lists don’t collapse to a single value when one slicer is active (same idea as Power BI).
+**Slicer behaviour:** For each dropdown, the backend **omits only that facet’s filter** when building its options, but applies **every other** filter (including chart-driven ones). So all lists stay consistent with the current slice of data.
 
 #### Shared query parameters (all dashboard GETs)
 
+Repeat a parameter for **multi-select** (OR within that dimension), e.g. `organizationId=a&organizationId=b`.
+
 | Query param | Meaning |
 |-------------|---------|
-| `organizationId` | Client (portal organization UUID). |
-| `assigneeId` | **Delivery SPOC** — portal user assigned on the issue (`assignee`). |
-| `severity` | `1`, `2`, or `3`. |
-| `environment` | Exact environment string, or `__BLANK__` for null/empty env. |
-| `month` | `YYYY-MM` — filters by **`issueDate`** in that calendar month. |
-| `rca` | `ALL` (default), `HAS` (RCA text non-empty), `EMPTY` (null/empty), `NO` (literal text `"no"`). |
-| `category` | Ticket category string, or `__BLANK__` for uncategorised. |
-| `module` | Module string (e.g. `DPAI`), or `__BLANK__` for empty. |
-| `jiraKey` | Exact Jira key, e.g. `EDM-3617`. |
+| `organizationId` | Client (portal organization UUID). Repeat for several. |
+| `assigneeId` | **Delivery SPOC** (`assignee`). Repeat for several. |
+| `severity` | `1`, `2`, or `3`. Repeat for several. |
+| `environment` | Exact string, or `__BLANK__`. Repeat for several. |
+| `month` | `YYYY-MM` — **`issueDate`** in that month. Repeat for several months (OR). |
+| `rca` | `HAS`, `EMPTY`, `NO` (repeat to OR; omit/`ALL` → no RCA filter). |
+| `category` | Category or `__BLANK__`. Repeat for several. |
+| `module` | Module or `__BLANK__`. Repeat for several. |
+| `jiraKey` | Exact Jira key. Repeat for several. |
+| `portalStatus` | `OPEN`, `ACKNOWLEDGED`, `IN_PROGRESS`, `RESOLVED`, `CLOSED`. Repeat for several. |
 
 ---
 
@@ -425,6 +428,7 @@ Returns distinct values for slicers under current cross-filters (with per-facet 
 | `ticketCategories` | distinct `category` (+ optional `__BLANK__`) |
 | `modules` | distinct `module` (+ optional `__BLANK__`) |
 | `jiraTickets` | up to **200** `{ jiraKey, title }` (distinct) |
+| `issueStatuses` | Distinct portal statuses present under current filters (`OPEN`, …) |
 
 ---
 
@@ -453,7 +457,7 @@ Returns distinct values for slicers under current cross-filters (with per-facet 
 }
 ```
 
-- **`key`**: use in filters when drilling — e.g. client chart → `organizationId=key`; month chart → `month=key` (`yyyy-MM`); severity → `severity=integer.parse(key)`; environment blank → `environment=__BLANK__`; RCA bucket → map `YES`/`NO`/`BLANK` to `rca=HAS` / `rca=NO` / `rca=EMPTY` as needed.
+- **`key`**: append to the shared query string when drilling — e.g. client → `organizationId=key`; month → `month=key`; severity → `severity=key`; environment blank → `environment=__BLANK__`; RCA bucket → `rca=HAS` / `rca=NO` / `rca=EMPTY`; if you add a chart by status later, use `portalStatus=key`.
 
 ---
 
