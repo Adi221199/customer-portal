@@ -13,5 +13,6 @@ public enum DashboardFacet {
 	RCA,
 	CATEGORY,
 	MODULE,
-	JIRA_KEY
+	JIRA_KEY,
+	PORTAL_STATUS
 }

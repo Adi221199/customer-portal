@@ -8,6 +8,7 @@ import com.scai.customer_portal.dashboard.DashboardAggregateDimension;
 import com.scai.customer_portal.dashboard.DashboardChartId;
 import com.scai.customer_portal.dashboard.DashboardFilterParams;
 import com.scai.customer_portal.dashboard.RcaFilter;
+import com.scai.customer_portal.domain.IssueStatus;
 import com.scai.customer_portal.service.DashboardService;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -17,6 +18,8 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 
 @RestController
@@ -35,37 +38,39 @@ public class DashboardController {
 	}
 
 	/**
-	 * Distinct slicer values under current cross-filters (omit self per facet — Power BI behaviour).
+	 * Slicer values under current cross-filters. Pass the <strong>same</strong> query params as chart/aggregate calls
+	 * (including chart drill: e.g. {@code month=2026-04} from a bar key). Each facet omits only its own filter when
+	 * building its list so other slicers stay fully narrowed by all selections.
 	 */
 	@GetMapping("/filters")
 	public DashboardFiltersResponse filters(
-			@RequestParam(required = false) UUID organizationId,
-			@RequestParam(required = false) UUID assigneeId,
-			@RequestParam(required = false) Integer severity,
-			@RequestParam(required = false) String environment,
-			@RequestParam(required = false) String month,
-			@RequestParam(required = false) String rca,
-			@RequestParam(required = false) String category,
-			@RequestParam(required = false) String module,
-			@RequestParam(required = false) String jiraKey) {
-		return dashboardService.filters(params(organizationId, assigneeId, severity, environment, month, rca, category, module, jiraKey));
+			@RequestParam(required = false) List<UUID> organizationId,
+			@RequestParam(required = false) List<UUID> assigneeId,
+			@RequestParam(required = false) List<Integer> severity,
+			@RequestParam(required = false) List<String> environment,
+			@RequestParam(required = false) List<String> month,
+			@RequestParam(required = false) List<String> rca,
+			@RequestParam(required = false) List<String> category,
+			@RequestParam(required = false) List<String> module,
+			@RequestParam(required = false) List<String> jiraKey,
+			@RequestParam(required = false) List<String> portalStatus) {
+		return dashboardService.filters(params(
+				organizationId, assigneeId, severity, environment, month, rca, category, module, jiraKey, portalStatus));
 	}
 
-	/**
-	 * One chart payload. Path segment e.g. {@code issues-by-month}. Pass same query params as filters for cross-filtering.
-	 */
 	@GetMapping("/charts/{chartPath}")
 	public DashboardChartResponse chart(
 			@PathVariable String chartPath,
-			@RequestParam(required = false) UUID organizationId,
-			@RequestParam(required = false) UUID assigneeId,
-			@RequestParam(required = false) Integer severity,
-			@RequestParam(required = false) String environment,
-			@RequestParam(required = false) String month,
-			@RequestParam(required = false) String rca,
-			@RequestParam(required = false) String category,
-			@RequestParam(required = false) String module,
-			@RequestParam(required = false) String jiraKey) {
+			@RequestParam(required = false) List<UUID> organizationId,
+			@RequestParam(required = false) List<UUID> assigneeId,
+			@RequestParam(required = false) List<Integer> severity,
+			@RequestParam(required = false) List<String> environment,
+			@RequestParam(required = false) List<String> month,
+			@RequestParam(required = false) List<String> rca,
+			@RequestParam(required = false) List<String> category,
+			@RequestParam(required = false) List<String> module,
+			@RequestParam(required = false) List<String> jiraKey,
+			@RequestParam(required = false) List<String> portalStatus) {
 		DashboardChartId chartId;
 		try {
 			chartId = DashboardChartId.fromPathSegment(chartPath);
@@ -75,24 +80,22 @@ public class DashboardController {
 		}
 		return dashboardService.chart(
 				chartId,
-				params(organizationId, assigneeId, severity, environment, month, rca, category, module, jiraKey));
+				params(organizationId, assigneeId, severity, environment, month, rca, category, module, jiraKey, portalStatus));
 	}
 
-	/**
-	 * Generic GROUP BY for decomposition tree: {@code groupBy=MONTH|CLIENT|ENVIRONMENT|SEVERITY|MODULE|CATEGORY|RCA}.
-	 */
 	@GetMapping("/aggregate")
 	public DashboardAggregateResponse aggregate(
 			@RequestParam String groupBy,
-			@RequestParam(required = false) UUID organizationId,
-			@RequestParam(required = false) UUID assigneeId,
-			@RequestParam(required = false) Integer severity,
-			@RequestParam(required = false) String environment,
-			@RequestParam(required = false) String month,
-			@RequestParam(required = false) String rca,
-			@RequestParam(required = false) String category,
-			@RequestParam(required = false) String module,
-			@RequestParam(required = false) String jiraKey) {
+			@RequestParam(required = false) List<UUID> organizationId,
+			@RequestParam(required = false) List<UUID> assigneeId,
+			@RequestParam(required = false) List<Integer> severity,
+			@RequestParam(required = false) List<String> environment,
+			@RequestParam(required = false) List<String> month,
+			@RequestParam(required = false) List<String> rca,
+			@RequestParam(required = false) List<String> category,
+			@RequestParam(required = false) List<String> module,
+			@RequestParam(required = false) List<String> jiraKey,
+			@RequestParam(required = false) List<String> portalStatus) {
 		DashboardAggregateDimension dim;
 		try {
 			dim = DashboardAggregateDimension.valueOf(groupBy.trim().toUpperCase());
@@ -100,28 +103,80 @@ public class DashboardController {
 		catch (IllegalArgumentException e) {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid groupBy: " + groupBy);
 		}
-		return dashboardService.aggregate(dim, params(organizationId, assigneeId, severity, environment, month, rca, category, module, jiraKey));
+		return dashboardService.aggregate(dim, params(
+				organizationId, assigneeId, severity, environment, month, rca, category, module, jiraKey, portalStatus));
 	}
 
 	private static DashboardFilterParams params(
-			UUID organizationId,
-			UUID assigneeId,
-			Integer severity,
-			String environment,
-			String month,
-			String rca,
-			String category,
-			String module,
-			String jiraKey) {
+			List<UUID> organizationId,
+			List<UUID> assigneeId,
+			List<Integer> severity,
+			List<String> environment,
+			List<String> month,
+			List<String> rca,
+			List<String> category,
+			List<String> module,
+			List<String> jiraKey,
+			List<String> portalStatus) {
 		return new DashboardFilterParams(
-				organizationId,
-				assigneeId,
-				severity,
-				environment,
-				month,
-				RcaFilter.parse(rca),
-				category,
-				module,
-				jiraKey);
+				nullIfEmpty(organizationId),
+				nullIfEmpty(assigneeId),
+				nullIfEmpty(filterNulls(severity)),
+				nullIfEmpty(trimNonBlank(environment)),
+				nullIfEmpty(trimNonBlank(month)),
+				normalizeRca(rca),
+				nullIfEmpty(trimNonBlank(category)),
+				nullIfEmpty(trimNonBlank(module)),
+				nullIfEmpty(trimNonBlank(jiraKey)),
+				parsePortalStatuses(portalStatus));
+	}
+
+	private static List<IssueStatus> parsePortalStatuses(List<String> raw) {
+		if (raw == null || raw.isEmpty()) {
+			return null;
+		}
+		List<IssueStatus> out = new ArrayList<>();
+		for (String s : raw) {
+			if (s == null || s.isBlank()) {
+				continue;
+			}
+			try {
+				out.add(IssueStatus.valueOf(s.trim().toUpperCase()));
+			}
+			catch (IllegalArgumentException ignored) {
+				// skip unknown
+			}
+		}
+		return out.isEmpty() ? null : out;
+	}
+
+	private static List<Integer> filterNulls(List<Integer> list) {
+		if (list == null) {
+			return null;
+		}
+		return list.stream().filter(s -> s != null).toList();
+	}
+
+	private static List<String> trimNonBlank(List<String> list) {
+		if (list == null) {
+			return null;
+		}
+		List<String> out = list.stream()
+				.map(s -> s == null ? "" : s.trim())
+				.filter(s -> !s.isBlank())
+				.toList();
+		return out.isEmpty() ? null : out;
+	}
+
+	private static List<RcaFilter> normalizeRca(List<String> raw) {
+		if (raw == null || raw.isEmpty()) {
+			return null;
+		}
+		List<RcaFilter> parsed = raw.stream().map(RcaFilter::parse).filter(r -> r != RcaFilter.ALL).distinct().toList();
+		return parsed.isEmpty() ? null : parsed;
+	}
+
+	private static <T> List<T> nullIfEmpty(List<T> list) {
+		return (list == null || list.isEmpty()) ? null : list;
 	}
 }

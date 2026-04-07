@@ -13,7 +13,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Applies dashboard slicers. When computing distinct values for facet {@code omit}, that facet's filter is skipped.
+ * Dashboard slicers. When building distinct values for facet {@code omit}, that facet's filter is omitted so the
+ * dropdown still shows alternatives; <strong>all other</strong> active filters (including chart drill params) still apply.
  */
 public final class DashboardCrossFilterSpecification {
 
@@ -25,41 +26,90 @@ public final class DashboardCrossFilterSpecification {
 	public static Specification<Issue> crossFilters(DashboardFilterParams p, DashboardFacet omit) {
 		return (root, query, cb) -> {
 			List<Predicate> ps = new ArrayList<>();
-			if (shouldApply(DashboardFacet.ORGANIZATION, omit) && p.organizationId() != null) {
-				ps.add(cb.equal(root.get("organization").get("id"), p.organizationId()));
+			if (shouldApply(DashboardFacet.ORGANIZATION, omit) && p.organizationIds() != null && !p.organizationIds().isEmpty()) {
+				ps.add(root.get("organization").get("id").in(p.organizationIds()));
 			}
-			if (shouldApply(DashboardFacet.ASSIGNEE, omit) && p.assigneeId() != null) {
-				ps.add(cb.equal(root.get("assignee").get("id"), p.assigneeId()));
+			if (shouldApply(DashboardFacet.ASSIGNEE, omit) && p.assigneeIds() != null && !p.assigneeIds().isEmpty()) {
+				ps.add(root.get("assignee").get("id").in(p.assigneeIds()));
 			}
-			if (shouldApply(DashboardFacet.SEVERITY, omit) && p.severity() != null) {
-				ps.add(cb.equal(root.get("severity"), p.severity()));
+			if (shouldApply(DashboardFacet.SEVERITY, omit) && p.severities() != null && !p.severities().isEmpty()) {
+				ps.add(root.get("severity").in(p.severities()));
 			}
-			if (shouldApply(DashboardFacet.ENVIRONMENT, omit) && p.environment() != null && !p.environment().isBlank()) {
-				ps.add(envPredicate(root, cb, p.environment()));
-			}
-			if (shouldApply(DashboardFacet.MONTH, omit) && p.month() != null && !p.month().isBlank()) {
-				try {
-					YearMonth ym = YearMonth.parse(p.month().trim());
-					LocalDate start = ym.atDay(1);
-					LocalDate end = ym.atEndOfMonth();
-					ps.add(cb.between(root.get("issueDate"), start, end));
+			if (shouldApply(DashboardFacet.ENVIRONMENT, omit) && p.environments() != null && !p.environments().isEmpty()) {
+				List<Predicate> envPs = new ArrayList<>();
+				for (String raw : p.environments()) {
+					if (raw == null || raw.isBlank()) {
+						continue;
+					}
+					envPs.add(envPredicate(root, cb, raw));
 				}
-				catch (Exception ignored) {
-					// invalid month → no rows
-					ps.add(cb.disjunction());
+				if (!envPs.isEmpty()) {
+					ps.add(cb.or(envPs.toArray(Predicate[]::new)));
 				}
 			}
-			if (shouldApply(DashboardFacet.RCA, omit) && p.rca() != null && p.rca() != RcaFilter.ALL) {
-				ps.add(rcaPredicate(root, cb, p.rca()));
+			if (shouldApply(DashboardFacet.MONTH, omit) && p.months() != null && !p.months().isEmpty()) {
+				List<Predicate> monthPs = new ArrayList<>();
+				for (String m : p.months()) {
+					if (m == null || m.isBlank()) {
+						continue;
+					}
+					try {
+						YearMonth ym = YearMonth.parse(m.trim());
+						LocalDate start = ym.atDay(1);
+						LocalDate end = ym.atEndOfMonth();
+						monthPs.add(cb.between(root.get("issueDate"), start, end));
+					}
+					catch (Exception ignored) {
+						// skip invalid
+					}
+				}
+				if (!monthPs.isEmpty()) {
+					ps.add(cb.or(monthPs.toArray(Predicate[]::new)));
+				}
 			}
-			if (shouldApply(DashboardFacet.CATEGORY, omit) && p.category() != null && !p.category().isBlank()) {
-				ps.add(categoryPredicate(root, cb, p.category()));
+			if (shouldApply(DashboardFacet.RCA, omit) && p.rcaFilters() != null && !p.rcaFilters().isEmpty()) {
+				List<RcaFilter> nonAll = p.rcaFilters().stream().filter(r -> r != RcaFilter.ALL).distinct().toList();
+				if (!nonAll.isEmpty()) {
+					List<Predicate> rcaPs = nonAll.stream().map(r -> rcaPredicate(root, cb, r)).toList();
+					ps.add(cb.or(rcaPs.toArray(Predicate[]::new)));
+				}
 			}
-			if (shouldApply(DashboardFacet.MODULE, omit) && p.module() != null && !p.module().isBlank()) {
-				ps.add(modulePredicate(root, cb, p.module()));
+			if (shouldApply(DashboardFacet.CATEGORY, omit) && p.categories() != null && !p.categories().isEmpty()) {
+				List<Predicate> catPs = new ArrayList<>();
+				for (String raw : p.categories()) {
+					if (raw == null || raw.isBlank()) {
+						continue;
+					}
+					catPs.add(categoryPredicate(root, cb, raw));
+				}
+				if (!catPs.isEmpty()) {
+					ps.add(cb.or(catPs.toArray(Predicate[]::new)));
+				}
 			}
-			if (shouldApply(DashboardFacet.JIRA_KEY, omit) && p.jiraKey() != null && !p.jiraKey().isBlank()) {
-				ps.add(cb.equal(root.get("jiraIssueKey"), p.jiraKey().trim()));
+			if (shouldApply(DashboardFacet.MODULE, omit) && p.modules() != null && !p.modules().isEmpty()) {
+				List<Predicate> modPs = new ArrayList<>();
+				for (String raw : p.modules()) {
+					if (raw == null || raw.isBlank()) {
+						continue;
+					}
+					modPs.add(modulePredicate(root, cb, raw));
+				}
+				if (!modPs.isEmpty()) {
+					ps.add(cb.or(modPs.toArray(Predicate[]::new)));
+				}
+			}
+			if (shouldApply(DashboardFacet.JIRA_KEY, omit) && p.jiraKeys() != null && !p.jiraKeys().isEmpty()) {
+				List<String> keys = p.jiraKeys().stream()
+						.map(String::trim)
+						.filter(s -> !s.isBlank())
+						.distinct()
+						.toList();
+				if (!keys.isEmpty()) {
+					ps.add(root.get("jiraIssueKey").in(keys));
+				}
+			}
+			if (shouldApply(DashboardFacet.PORTAL_STATUS, omit) && p.portalStatuses() != null && !p.portalStatuses().isEmpty()) {
+				ps.add(root.get("portalStatus").in(p.portalStatuses()));
 			}
 			return ps.isEmpty() ? cb.conjunction() : cb.and(ps.toArray(Predicate[]::new));
 		};

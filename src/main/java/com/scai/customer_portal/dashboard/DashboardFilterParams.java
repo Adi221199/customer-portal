@@ -1,27 +1,27 @@
 package com.scai.customer_portal.dashboard;
 
+import com.scai.customer_portal.domain.IssueStatus;
+
+import java.util.List;
 import java.util.UUID;
 
 /**
- * Cross-filter query params shared by slicer and chart APIs. All optional; omitted means "no filter".
- *
- * @param month        {@code YYYY-MM} — filters by {@code issueDate} within that calendar month
- * @param environment  use {@link DashboardCrossFilterSpecification#BLANK_TOKEN} for empty / null env in Jira
- * @param category     same {@code __BLANK__} convention for uncategorised issues
- * @param module       Jira/module string; {@code __BLANK__} for empty module
+ * Cross-filter query params for dashboard GETs. {@code null} or empty list = no filter on that dimension.
+ * Repeat the same query key for multi-select (OR within the dimension), e.g. {@code organizationId=a&organizationId=b}.
  */
 public record DashboardFilterParams(
-		UUID organizationId,
-		UUID assigneeId,
-		Integer severity,
-		String environment,
-		String month,
-		RcaFilter rca,
-		String category,
-		String module,
-		String jiraKey
+		List<UUID> organizationIds,
+		List<UUID> assigneeIds,
+		List<Integer> severities,
+		List<String> environments,
+		List<String> months,
+		List<RcaFilter> rcaFilters,
+		List<String> categories,
+		List<String> modules,
+		List<String> jiraKeys,
+		List<IssueStatus> portalStatuses
 ) {
 	public static DashboardFilterParams empty() {
-		return new DashboardFilterParams(null, null, null, null, null, RcaFilter.ALL, null, null, null);
+		return new DashboardFilterParams(null, null, null, null, null, null, null, null, null, null);
 	}
 }

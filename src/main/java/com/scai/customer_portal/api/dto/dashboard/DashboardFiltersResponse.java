@@ -11,6 +11,8 @@ public record DashboardFiltersResponse(
 		List<String> rcaOptions,
 		List<String> ticketCategories,
 		List<String> modules,
-		List<JiraTicketOption> jiraTickets
+		List<JiraTicketOption> jiraTickets,
+		/** Distinct portal status enum names (OPEN, IN_PROGRESS, …) under current cross-filters. */
+		List<String> issueStatuses
 ) {
 }
