@@ -334,7 +334,8 @@ public class IssueService {
 		if (request.severity() != null && issue.getSeverity() == null) {
 			issue.setSeverity(request.severity());
 		}
-		if (request.rcaDescription() != null && isTextSlotEmpty(issue.getRcaDescription())) {
+		// RCA is narrative text: allow edits on every PATCH when the client sends the field (not gap-fill only).
+		if (request.rcaDescription() != null) {
 			issue.setRcaDescription(blankToNull(request.rcaDescription()));
 		}
 		return toResponse(issueRepository.save(issue));
