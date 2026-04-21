@@ -11,9 +11,10 @@ import java.util.UUID;
  */
 public record DashboardFilterParams(
 		List<UUID> organizationIds,
-		List<UUID> assigneeIds,
-		/** Delivery SPOC by portal user id and/or by email (Jira assignee not linked to a portal user). */
-		List<String> assigneeEmails,
+		/** Portal user linked as Jira reporter ({@code portalReporter}). */
+		List<UUID> spocPortalUserIds,
+		/** Reporter email: match {@code portalReporter.email} or {@code jiraReporterEmail} when reporter is not linked. */
+		List<String> spocEmails,
 		List<Integer> severities,
 		List<String> environments,
 		List<String> months,

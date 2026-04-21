@@ -2,16 +2,15 @@ package com.scai.customer_portal.config;
 
 import com.scai.customer_portal.domain.AppUser;
 import com.scai.customer_portal.domain.Organization;
-import com.scai.customer_portal.domain.Pod;
 import com.scai.customer_portal.domain.PortalRole;
 import com.scai.customer_portal.repository.AppUserRepository;
 import com.scai.customer_portal.repository.OrganizationRepository;
-import com.scai.customer_portal.repository.PodRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.context.annotation.Profile;
+import org.springframework.core.annotation.Order;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -19,7 +18,11 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.HashSet;
 import java.util.Set;
 
+/**
+ * Demo users for local dev. Runs after {@link DefaultInternalOrganizationBootstrap} (internal {@code 3SC} org).
+ */
 @Component
+@Order(2)
 @Profile("!test")
 public class DataSeed implements ApplicationRunner {
 
@@ -27,17 +30,14 @@ public class DataSeed implements ApplicationRunner {
 
 	private final AppUserRepository appUserRepository;
 	private final OrganizationRepository organizationRepository;
-	private final PodRepository podRepository;
 	private final PasswordEncoder passwordEncoder;
 
 	public DataSeed(
 			AppUserRepository appUserRepository,
 			OrganizationRepository organizationRepository,
-			PodRepository podRepository,
 			PasswordEncoder passwordEncoder) {
 		this.appUserRepository = appUserRepository;
 		this.organizationRepository = organizationRepository;
-		this.podRepository = podRepository;
 		this.passwordEncoder = passwordEncoder;
 	}
 
@@ -47,10 +47,11 @@ public class DataSeed implements ApplicationRunner {
 		if (appUserRepository.count() > 0) {
 			return;
 		}
-		organizationRepository.save(Organization.builder().name(DefaultInternalOrganizationBootstrap.INTERNAL_ORG_NAME).build());
-		Organization acme = organizationRepository.save(Organization.builder().name("Acme Corp").build());
-		organizationRepository.save(Organization.builder().name("Globex").build());
-		Pod pod = podRepository.save(Pod.builder().name("Delivery Pod 1").build());
+		Organization internal = organizationRepository
+				.findByNameIgnoreCase(DefaultInternalOrganizationBootstrap.INTERNAL_ORG_NAME)
+				.orElseThrow(() -> new IllegalStateException(
+						"Expected organization '" + DefaultInternalOrganizationBootstrap.INTERNAL_ORG_NAME
+								+ "' from DefaultInternalOrganizationBootstrap"));
 
 		AppUser admin = AppUser.builder()
 				.email("admin@3sc.local")
@@ -58,7 +59,7 @@ public class DataSeed implements ApplicationRunner {
 				.displayName("3SC Admin")
 				.enabled(true)
 				.organization(null)
-				.pods(new HashSet<>())
+				.assignedModules(new HashSet<>())
 				.roles(Set.of(PortalRole.SC_ADMIN))
 				.build();
 		appUserRepository.save(admin);
@@ -69,22 +70,22 @@ public class DataSeed implements ApplicationRunner {
 				.displayName("3SC Lead")
 				.enabled(true)
 				.organization(null)
-				.pods(new HashSet<>(Set.of(pod)))
+				.assignedModules(new HashSet<>(Set.of("EDM")))
 				.roles(Set.of(PortalRole.SC_LEAD))
 				.build();
 		appUserRepository.save(lead);
 
 		AppUser custAdmin = AppUser.builder()
-				.email("customer.admin@acme.test")
+				.email("customer.admin@3sc.local")
 				.passwordHash(passwordEncoder.encode("ChangeMeCust!12"))
-				.displayName("Acme Admin")
+				.displayName("Customer Admin (3SC)")
 				.enabled(true)
-				.organization(acme)
-				.pods(new HashSet<>())
+				.organization(internal)
+				.assignedModules(new HashSet<>())
 				.roles(Set.of(PortalRole.CUSTOMER_ADMIN))
 				.build();
 		appUserRepository.save(custAdmin);
 
-		log.info("Seeded demo organizations, pod, and users (first run only). Use documented default passwords only in local/dev.");
+		log.info("Seeded demo users (first run only). Use documented default passwords only in local/dev.");
 	}
 }

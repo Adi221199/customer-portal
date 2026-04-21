@@ -88,11 +88,15 @@ public class JiraRemoteService {
 	}
 
 	/**
-	 * Max issues to enumerate in one bulk-import run (see {@code jira.bulk-import-max-total}).
+	 * Max issues to enumerate in one bulk-import JQL search (see {@code jira.bulk-import-max-total}).
+	 * {@code null}, zero, or negative = no cap (paginate until Jira returns no more matches).
 	 */
 	public int configuredBulkImportMaxTotal() {
 		Integer m = jiraProperties.bulkImportMaxTotal();
-		return m != null && m > 0 ? m : 2000;
+		if (m == null || m <= 0) {
+			return Integer.MAX_VALUE;
+		}
+		return m;
 	}
 
 	/**
@@ -230,11 +234,9 @@ public class JiraRemoteService {
 	 * {@code POST /rest/api/3/search/jql} in pages; returns issue keys only (full issue is still fetched per key).
 	 */
 	public List<String> searchIssueKeysForBulkImport(BulkJiraImportRequest filter, int maxTotal) {
-		if (maxTotal <= 0) {
-			return List.of();
-		}
+		int cap = maxTotal <= 0 ? Integer.MAX_VALUE : maxTotal;
 		String jql = buildBulkImportJql(filter);
-		return searchIssueKeysByJql(jql, maxTotal);
+		return searchIssueKeysByJql(jql, cap);
 	}
 
 	private List<String> searchIssueKeysByJql(String jql, int maxTotal) {
@@ -387,15 +389,6 @@ public class JiraRemoteService {
 		if (fieldId == null || fieldId.isBlank()) {
 			fieldId = resolveEnvironmentFieldId();
 		}
-		if (fieldId == null || fieldId.isBlank()) {
-			return null;
-		}
-		return extractJiraFieldValue(fields, fieldId);
-	}
-
-	/** Optional {@code jira.pod-field-id}: value should match a portal pod name (e.g. EDM, DevOps). */
-	public String extractPodLabelFromFields(JsonNode fields) {
-		String fieldId = jiraProperties.podFieldId();
 		if (fieldId == null || fieldId.isBlank()) {
 			return null;
 		}

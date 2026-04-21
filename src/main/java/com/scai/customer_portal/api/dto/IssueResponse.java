@@ -23,8 +23,6 @@ public record IssueResponse(
 		IssueStatus portalStatus,
 		UUID organizationId,
 		String organizationName,
-		UUID podId,
-		String podName,
 		UUID assigneeId,
 		String assigneeEmail,
 		String assigneeDisplayName,

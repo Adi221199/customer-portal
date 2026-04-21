@@ -13,12 +13,10 @@ import com.scai.customer_portal.domain.AppUser;
 import com.scai.customer_portal.domain.Issue;
 import com.scai.customer_portal.domain.Organization;
 import com.scai.customer_portal.config.DefaultInternalOrganizationBootstrap;
-import com.scai.customer_portal.domain.Pod;
 import com.scai.customer_portal.domain.PortalRole;
 import com.scai.customer_portal.repository.AppUserRepository;
 import com.scai.customer_portal.repository.IssueRepository;
 import com.scai.customer_portal.repository.OrganizationRepository;
-import com.scai.customer_portal.repository.PodRepository;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.task.TaskExecutor;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -36,7 +34,6 @@ import java.util.Comparator;
 import java.util.EnumSet;
 import java.util.Locale;
 import java.util.List;
-import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
@@ -50,15 +47,11 @@ public class IssueService {
 			PortalRole.CUSTOMER_ADMIN,
 			PortalRole.CUSTOMER_USER);
 
-	/** Bulk import spans all Jira-matched orgs; only internal roles may run it. */
-	private static final Set<PortalRole> BULK_IMPORT_ROLES = EnumSet.of(
-			PortalRole.SC_ADMIN,
-			PortalRole.SC_LEAD,
-			PortalRole.SC_AGENT);
+	/** Bulk JQL import spans all Jira-matched orgs; only {@link PortalRole#SC_ADMIN} may run or load options. */
+	private static final Set<PortalRole> BULK_IMPORT_ROLES = EnumSet.of(PortalRole.SC_ADMIN);
 
 	private final IssueRepository issueRepository;
 	private final OrganizationRepository organizationRepository;
-	private final PodRepository podRepository;
 	private final AppUserRepository appUserRepository;
 	private final JiraRemoteService jiraRemoteService;
 	private final JiraIssueMapper jiraIssueMapper;
@@ -71,7 +64,6 @@ public class IssueService {
 	public IssueService(
 			IssueRepository issueRepository,
 			OrganizationRepository organizationRepository,
-			PodRepository podRepository,
 			AppUserRepository appUserRepository,
 			JiraRemoteService jiraRemoteService,
 			JiraIssueMapper jiraIssueMapper,
@@ -82,7 +74,6 @@ public class IssueService {
 			@Qualifier("bulkImportExecutor") TaskExecutor bulkImportExecutor) {
 		this.issueRepository = issueRepository;
 		this.organizationRepository = organizationRepository;
-		this.podRepository = podRepository;
 		this.appUserRepository = appUserRepository;
 		this.jiraRemoteService = jiraRemoteService;
 		this.jiraIssueMapper = jiraIssueMapper;
@@ -111,7 +102,7 @@ public class IssueService {
 	/**
 	 * JQL search for issues where Customer and Environment are not empty, then full import per key (same mapping as
 	 * single import). One transaction per issue so one failure does not roll back the whole run.
-	 * Restricted to {@link #BULK_IMPORT_ROLES} (internal team only).
+	 * Restricted to {@link PortalRole#SC_ADMIN} only.
 	 */
 	public BulkImportOptionsResponse bulkImportOptions() {
 		AppUser actor = currentUserService.requireCurrentUser();
@@ -122,14 +113,22 @@ public class IssueService {
 				.map(o -> new BulkImportOptionsResponse.NameLabelOption(o.getName(), o.getName()))
 				.sorted(Comparator.comparing(BulkImportOptionsResponse.NameLabelOption::label))
 				.toList();
-		List<BulkImportOptionsResponse.NameLabelOption> pods = podRepository.findAll().stream()
-				.map(p -> new BulkImportOptionsResponse.NameLabelOption(p.getName(), p.getName()))
-				.sorted(Comparator.comparing(BulkImportOptionsResponse.NameLabelOption::label))
+		List<BulkImportOptionsResponse.PortalOrganizationOption> portalOrgs = organizationRepository.findAll().stream()
+				.map(o -> new BulkImportOptionsResponse.PortalOrganizationOption(o.getId(), o.getName()))
+				.sorted(Comparator.comparing(BulkImportOptionsResponse.PortalOrganizationOption::name,
+						String.CASE_INSENSITIVE_ORDER))
+				.toList();
+		List<BulkImportOptionsResponse.NameLabelOption> modules = issueRepository.findDistinctIssueModuleCodesRaw().stream()
+				.filter(s -> s != null && !s.isBlank())
+				.map(m -> m.trim().toUpperCase(Locale.ROOT))
+				.distinct()
+				.sorted(String.CASE_INSENSITIVE_ORDER)
+				.map(m -> new BulkImportOptionsResponse.NameLabelOption(m, m))
 				.toList();
 		List<String> envs = issueRepository.findDistinctNonBlankEnvironments().stream()
 				.sorted(Comparator.comparing(s -> s.trim().toLowerCase(Locale.ROOT)))
 				.toList();
-		return new BulkImportOptionsResponse(orgs, pods, envs);
+		return new BulkImportOptionsResponse(orgs, modules, envs, portalOrgs);
 	}
 
 	/**
@@ -170,6 +169,10 @@ public class IssueService {
 			AppUser actor = appUserRepository.findById(actorUserId).orElse(null);
 			if (actor == null) {
 				bulkJiraImportJobRegistry.markFailed(jobId, "User not found");
+				return;
+			}
+			if (actor.getRoles().stream().noneMatch(BULK_IMPORT_ROLES::contains)) {
+				bulkJiraImportJobRegistry.markFailed(jobId, "Not allowed to run bulk Jira import");
 				return;
 			}
 			if (!jiraRemoteService.isConfigured()) {
@@ -231,7 +234,7 @@ public class IssueService {
 
 	/**
 	 * Background job: refresh progress fields from Jira (status, summary when present, resolution date, priority).
-	 * Does not overwrite organization, pod, env/module/category, RCA, reporter, assignee, description, etc.
+	 * Does not overwrite organization, env/module/category, RCA, reporter, assignee, description, etc.
 	 * Does not change {@link Issue#getCreatedBy()}. Use {@link #syncIssueFromJira} for a full re-import.
 	 */
 	@Transactional
@@ -267,7 +270,6 @@ public class IssueService {
 		JsonNode fields = root.path("fields");
 		Organization org = resolveOrganizationForImport(fields, actor);
 		jiraIssueMapper.applyJsonToIssue(issue, root, org, actor, snapshot);
-		applyPodFromJira(fields, issue, actor);
 		applyAssigneeFromJira(fields, issue);
 		issue.setPortalReporter(resolvePortalUserByEmail(issue.getJiraReporterEmail()));
 		if (issue.getCreatedBy() == null && actor != null) {
@@ -336,63 +338,6 @@ public class IssueService {
 				});
 	}
 
-	/**
-	 * Sets {@link Issue#getPod()} from Jira when possible, else keeps internal users aligned with their own pod
-	 * so SC_LEAD/SC_AGENT do not lose visibility on re-import.
-	 */
-	private void applyPodFromJira(JsonNode fields, Issue issue, AppUser actor) {
-		Pod fromJira = resolvePodEntityFromJira(fields, issue);
-		if (actor == null || actor.getRoles().contains(PortalRole.SC_ADMIN)) {
-			issue.setPod(fromJira);
-			return;
-		}
-		if (actor.getRoles().contains(PortalRole.SC_LEAD) || actor.getRoles().contains(PortalRole.SC_AGENT)) {
-			var actorPods = actor.getPods();
-			if (fromJira != null && actor.isAssignedToPod(fromJira)) {
-				issue.setPod(fromJira);
-			}
-			else if (actorPods != null && actorPods.size() == 1) {
-				issue.setPod(actorPods.iterator().next());
-			}
-			else if (actorPods == null || actorPods.isEmpty()) {
-				issue.setPod(fromJira);
-			}
-			else {
-				issue.setPod(null);
-			}
-			return;
-		}
-		issue.setPod(null);
-	}
-
-	/**
-	 * 1) Optional {@code jira.pod-field-id} value → {@link PodRepository#findByNameIgnoreCase}.
-	 * 2) Else {@link Issue#getModule()} (exact or first comma-separated token) → same lookup.
-	 */
-	private Pod resolvePodEntityFromJira(JsonNode fields, Issue issue) {
-		String podLabel = jiraRemoteService.extractPodLabelFromFields(fields);
-		if (podLabel != null && !podLabel.isBlank()) {
-			Optional<Pod> byField = podRepository.findByNameIgnoreCase(podLabel.trim());
-			if (byField.isPresent()) {
-				return byField.get();
-			}
-		}
-		String mod = issue.getModule();
-		if (mod == null || mod.isBlank()) {
-			return null;
-		}
-		String trimmed = mod.trim();
-		Optional<Pod> full = podRepository.findByNameIgnoreCase(trimmed);
-		if (full.isPresent()) {
-			return full.get();
-		}
-		String first = trimmed.split(",")[0].trim();
-		if (!first.isEmpty() && !first.equalsIgnoreCase(trimmed)) {
-			return podRepository.findByNameIgnoreCase(first).orElse(null);
-		}
-		return null;
-	}
-
 	private void applyAssigneeFromJira(JsonNode fields, Issue issue) {
 		JsonNode assigneeNode = fields.get("assignee");
 		if (assigneeNode == null || assigneeNode.isNull() || assigneeNode.isMissingNode()) {
@@ -459,15 +404,6 @@ public class IssueService {
 		if (request.organizationName() != null && !request.organizationName().isBlank()) {
 			applyOrganizationNameIfSlotOpen(issue, request.organizationName().trim());
 		}
-		if (request.podName() != null && !request.podName().isBlank() && issue.getPod() == null) {
-			if (!canMutateIssuePod(actor)) {
-				throw new SecurityException("Not allowed to change pod on this issue");
-			}
-			Pod p = podRepository.findByNameIgnoreCase(request.podName().trim())
-					.orElseThrow(() -> new IllegalArgumentException("Pod not found: " + request.podName().trim()));
-			assertPodPatchAllowed(actor, p);
-			issue.setPod(p);
-		}
 		if (request.closingDate() != null && issue.getClosingDate() == null) {
 			issue.setClosingDate(request.closingDate());
 		}
@@ -514,26 +450,6 @@ public class IssueService {
 		return t.isEmpty() ? null : t;
 	}
 
-	private static boolean canMutateIssuePod(AppUser actor) {
-		return actor.getRoles().contains(PortalRole.SC_ADMIN)
-				|| actor.getRoles().contains(PortalRole.SC_LEAD)
-				|| actor.getRoles().contains(PortalRole.SC_AGENT);
-	}
-
-	/** Pod reassignment: admins any pod; SC_LEAD/SC_AGENT only their pod. */
-	private static void assertPodPatchAllowed(AppUser actor, Pod targetPod) {
-		if (actor.getRoles().contains(PortalRole.SC_ADMIN)) {
-			return;
-		}
-		if (actor.getRoles().contains(PortalRole.SC_LEAD) || actor.getRoles().contains(PortalRole.SC_AGENT)) {
-			if (!actor.isAssignedToPod(targetPod)) {
-				throw new SecurityException("You can only assign issues to a pod you are assigned to");
-			}
-			return;
-		}
-		throw new SecurityException("Not allowed to set pod on this issue");
-	}
-
 	private boolean canPatch(AppUser actor, Issue issue) {
 		if (actor.getRoles().contains(PortalRole.SC_ADMIN)) {
 			return true;
@@ -554,6 +470,15 @@ public class IssueService {
 		return false;
 	}
 
+	/** Stored module, or Jira project prefix from {@link Issue#getJiraIssueKey()} when unset (e.g. {@code EDM-1234} → {@code EDM}). */
+	private static String effectiveModule(Issue i) {
+		String m = i.getModule();
+		if (m != null && !m.isBlank()) {
+			return m.trim();
+		}
+		return JiraIssueMapper.projectPrefixFromIssueKey(i.getJiraIssueKey());
+	}
+
 	private IssueResponse toResponse(Issue i) {
 		String assigneeEmail = i.getAssignee() != null ? i.getAssignee().getEmail() : i.getJiraAssigneeEmail();
 		String assigneeDisplayName = i.getAssignee() != null
@@ -569,7 +494,7 @@ public class IssueService {
 				i.getDescription(),
 				i.getIssueDate(),
 				i.getClosingDate(),
-				i.getModule(),
+				effectiveModule(i),
 				i.getEnvironment(),
 				i.getCategory(),
 				i.getSeverity(),
@@ -578,8 +503,6 @@ public class IssueService {
 				i.getPortalStatus(),
 				i.getOrganization().getId(),
 				i.getOrganization().getName(),
-				i.getPod() != null ? i.getPod().getId() : null,
-				i.getPod() != null ? i.getPod().getName() : null,
 				i.getAssignee() != null ? i.getAssignee().getId() : null,
 				assigneeEmail,
 				assigneeDisplayName,

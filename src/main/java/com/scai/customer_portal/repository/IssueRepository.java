@@ -19,23 +19,21 @@ public interface IssueRepository extends JpaRepository<Issue, UUID>, JpaSpecific
 	@Query("select i.id from Issue i where i.jiraIssueKey is not null")
 	List<UUID> findAllIdsWithJiraIssueKey();
 
-	@EntityGraph(attributePaths = { "organization", "pod", "assignee", "createdBy", "portalReporter" })
+	@EntityGraph(attributePaths = { "organization", "assignee", "createdBy", "portalReporter" })
 	@Override
 	@NonNull
 	List<Issue> findAll();
 
-	@EntityGraph(attributePaths = { "organization", "pod", "assignee", "createdBy", "portalReporter" })
+	@EntityGraph(attributePaths = { "organization", "assignee", "createdBy", "portalReporter" })
 	@Override
 	@NonNull
 	List<Issue> findAll(@NonNull Specification<Issue> spec);
 
-	@EntityGraph(attributePaths = { "organization", "pod", "assignee", "createdBy", "portalReporter" })
+	@EntityGraph(attributePaths = { "organization", "assignee", "createdBy", "portalReporter" })
 	@Override
 	Optional<Issue> findById(UUID id);
 
 	List<Issue> findByOrganization_Id(UUID organizationId);
-
-	List<Issue> findByPod_Id(UUID podId);
 
 	List<Issue> findByAssignee_Id(UUID assigneeId);
 
@@ -47,4 +45,18 @@ public interface IssueRepository extends JpaRepository<Issue, UUID>, JpaSpecific
 	 */
 	@Query("select distinct i.environment from Issue i where i.environment is not null and length(trim(i.environment)) > 0")
 	List<String> findDistinctNonBlankEnvironments();
+
+	/**
+	 * Distinct module / project codes from stored {@code module} or Jira key prefix (PostgreSQL {@code split_part}).
+	 * Sort in Java after fetch.
+	 */
+	@Query(value = """
+			select distinct upper(trim(both from x.m)) as m from (
+			  select coalesce(nullif(trim(both from i.module), ''), split_part(i.jira_issue_key, '-', 1)) as m
+			  from issues i
+			  where i.jira_issue_key is not null and position('-' in i.jira_issue_key) > 0
+			) x
+			where x.m is not null and trim(both from x.m) <> ''
+			""", nativeQuery = true)
+	List<String> findDistinctIssueModuleCodesRaw();
 }

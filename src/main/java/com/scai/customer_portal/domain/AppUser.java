@@ -11,8 +11,6 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
-import jakarta.persistence.JoinTable;
-import jakarta.persistence.ManyToMany;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import lombok.AllArgsConstructor;
@@ -22,6 +20,7 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 import java.util.HashSet;
+import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
 
@@ -55,14 +54,13 @@ public class AppUser {
 	private Organization organization;
 
 	/**
-	 * SC_LEAD / SC_AGENT: one or more pods assigned by admin. SC_ADMIN and customer roles typically have none.
+	 * SC_LEAD: Jira project / module codes (issue key prefix, e.g. EDM, DPAI) this user may see. Assigned by admin; no separate pod entity.
 	 */
-	@ManyToMany(fetch = FetchType.EAGER)
-	@JoinTable(name = "app_user_pods",
-			joinColumns = @JoinColumn(name = "user_id"),
-			inverseJoinColumns = @JoinColumn(name = "pod_id"))
+	@ElementCollection(fetch = FetchType.EAGER)
+	@CollectionTable(name = "app_user_modules", joinColumns = @JoinColumn(name = "user_id"))
+	@Column(name = "module_code", nullable = false, length = 200)
 	@Builder.Default
-	private Set<Pod> pods = new HashSet<>();
+	private Set<String> assignedModules = new HashSet<>();
 
 	@ElementCollection(fetch = FetchType.EAGER)
 	@CollectionTable(name = "app_user_roles", joinColumns = @JoinColumn(name = "user_id"))
@@ -71,11 +69,14 @@ public class AppUser {
 	@Builder.Default
 	private Set<PortalRole> roles = new HashSet<>();
 
-	/** Whether this user is allowed to work on issues for the given pod (for SC_LEAD / SC_AGENT). */
-	public boolean isAssignedToPod(Pod pod) {
-		if (pod == null || pods == null || pods.isEmpty()) {
+	/** Whether this SC_LEAD user is assigned the given module / project key (case-insensitive). */
+	public boolean isAssignedToModule(String moduleCode) {
+		if (moduleCode == null || moduleCode.isBlank() || assignedModules == null || assignedModules.isEmpty()) {
 			return false;
 		}
-		return pods.stream().anyMatch(p -> p.getId().equals(pod.getId()));
+		String m = moduleCode.trim().toLowerCase(Locale.ROOT);
+		return assignedModules.stream()
+				.filter(s -> s != null && !s.isBlank())
+				.anyMatch(s -> s.trim().toLowerCase(Locale.ROOT).equals(m));
 	}
 }

@@ -6,7 +6,8 @@ package com.scai.customer_portal.dashboard;
  */
 public enum DashboardFacet {
 	ORGANIZATION,
-	ASSIGNEE,
+	/** Jira reporter / portal reporter (SPOC), not assignee. */
+	SPOC,
 	SEVERITY,
 	ENVIRONMENT,
 	MONTH,

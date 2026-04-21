@@ -42,7 +42,7 @@ public class IssueController {
 		return issueService.importFromJira(request);
 	}
 
-	/** Dropdown data for bulk JQL filters (internal roles). */
+	/** Dropdown data for bulk JQL filters ({@code SC_ADMIN} only). */
 	@GetMapping("/bulk-import-options")
 	public BulkImportOptionsResponse bulkImportOptions() {
 		return issueService.bulkImportOptions();

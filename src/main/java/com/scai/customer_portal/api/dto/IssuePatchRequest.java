@@ -17,7 +17,6 @@ public record IssuePatchRequest(
 		@Size(max = 200) String category,
 		@Min(1) @Max(3) Integer severity,
 		String rcaDescription,
-		@Size(max = 200) String organizationName,
-		@Size(max = 200) String podName
+		@Size(max = 200) String organizationName
 ) {
 }

@@ -37,7 +37,7 @@ public class JiraIssueMapper {
 	}
 
 	/**
-	 * Cron / background sync: status-like fields only. Does not touch customer/org, pod, env, module, category,
+	 * Cron / background sync: status-like fields only. Does not touch customer/org, env, module, category,
 	 * RCA, reporter, assignee, description, issue date, etc., so portal values are not replaced by Jira nulls/omissions.
 	 */
 	public void applyBackgroundProgressFromJira(Issue target, JsonNode root, String snapshotJson) {
@@ -91,6 +91,13 @@ public class JiraIssueMapper {
 		if (module == null || module.isBlank()) {
 			module = joinComponentNames(fields.path("components"));
 		}
+		if (module == null || module.isBlank()) {
+			module = projectPrefixFromIssueKey(key);
+		}
+		if (module == null || module.isBlank()) {
+			String pk = fields.path("project").path("key").asText(null);
+			module = (pk != null && !pk.isBlank()) ? pk.trim() : null;
+		}
 		target.setModule(module);
 		target.setEnvironment(jiraRemoteService.extractEnvironmentValueFromFields(fields));
 		String category = readCustomField(fields, jiraProperties.categoryFieldId());
@@ -118,6 +125,22 @@ public class JiraIssueMapper {
 		}
 		target.setLastSyncedAt(Instant.now());
 		target.setJiraSnapshotJson(snapshotJson);
+	}
+
+	/**
+	 * Project key from Jira issue key (e.g. {@code EDM-1234} → {@code EDM}, {@code DPAI-5089} → {@code DPAI}).
+	 */
+	public static String projectPrefixFromIssueKey(String jiraIssueKey) {
+		if (jiraIssueKey == null || jiraIssueKey.isBlank()) {
+			return null;
+		}
+		String k = jiraIssueKey.trim();
+		int dash = k.indexOf('-');
+		if (dash <= 0) {
+			return null;
+		}
+		String prefix = k.substring(0, dash).trim();
+		return prefix.isEmpty() ? null : prefix;
 	}
 
 	private static String joinComponentNames(JsonNode components) {

@@ -10,8 +10,6 @@ public record JiraProperties(
 		String moduleFieldId,
 		String environmentFieldId,
 		String categoryFieldId,
-		/** Optional: Jira custom field whose value matches a portal pod name (e.g. EDM, DPAI). */
-		String podFieldId,
 		/** Optional: Jira custom field for RCA / root-cause text (plain or Atlassian Document Format). */
 		String rcaFieldId,
 		/**
@@ -19,7 +17,10 @@ public record JiraProperties(
 		 * Appended to the non-empty Customer + Environment filter.
 		 */
 		String bulkImportExtraJql,
-		/** Max issues to pull from Jira search per bulk run (pagination stops when reached). Default 2000 when unset. */
+		/**
+		 * Optional max issues from Jira search per bulk run. Unset, zero, or negative = no limit (all pages until Jira
+		 * ends). Set a positive value to cap (e.g. staging).
+		 */
 		Integer bulkImportMaxTotal
 ) {
 

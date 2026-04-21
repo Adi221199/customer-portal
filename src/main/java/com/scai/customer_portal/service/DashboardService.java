@@ -80,7 +80,7 @@ public class DashboardService {
 		AppUser user = currentUserService.requireCurrentUser();
 		return new DashboardFiltersResponse(
 				distinctOrganizations(user, params),
-				distinctAssignees(user, params),
+				distinctSpocs(user, params),
 				distinctSeverities(user, params),
 				distinctEnvironments(user, params),
 				distinctMonths(user, params),
@@ -289,29 +289,30 @@ public class DashboardService {
 				.toList();
 	}
 
-	private List<AssigneeOption> distinctAssignees(AppUser user, DashboardFilterParams p) {
+	/** Distinct SPOCs (Jira reporters): portal-linked {@code portalReporter} and Jira-only {@code jiraReporterEmail}. */
+	private List<AssigneeOption> distinctSpocs(AppUser user, DashboardFilterParams p) {
 		CriteriaBuilder cb = entityManager.getCriteriaBuilder();
 		CriteriaQuery<Tuple> cq = cb.createTupleQuery();
 		Root<Issue> root = cq.from(Issue.class);
-		Join<Issue, AppUser> a = root.join("assignee", JoinType.INNER);
-		cq.multiselect(a.get("id"), a.get("email"), a.get("displayName"));
-		cq.where(combined(root, cq, cb, user, p, DashboardFacet.ASSIGNEE));
+		Join<Issue, AppUser> reporter = root.join("portalReporter", JoinType.INNER);
+		cq.multiselect(reporter.get("id"), reporter.get("email"), reporter.get("displayName"));
+		cq.where(combined(root, cq, cb, user, p, DashboardFacet.SPOC));
 		cq.distinct(true);
-		cq.orderBy(cb.asc(a.get("email")));
+		cq.orderBy(cb.asc(reporter.get("email")));
 		List<AssigneeOption> portalLinked = entityManager.createQuery(cq).getResultList().stream()
 				.map(t -> new AssigneeOption(t.get(0, UUID.class), t.get(1, String.class), t.get(2, String.class)))
 				.toList();
 
 		CriteriaQuery<Tuple> cq2 = cb.createTupleQuery();
 		Root<Issue> root2 = cq2.from(Issue.class);
-		cq2.multiselect(root2.get("jiraAssigneeEmail"), root2.get("jiraAssigneeDisplayName"));
+		cq2.multiselect(root2.get("jiraReporterEmail"), root2.get("jiraReporterDisplayName"));
 		cq2.where(
-				combined(root2, cq2, cb, user, p, DashboardFacet.ASSIGNEE),
-				cb.isNull(root2.get("assignee")),
-				cb.isNotNull(root2.get("jiraAssigneeEmail")),
-				cb.greaterThan(cb.length(cb.trim(root2.get("jiraAssigneeEmail"))), 0));
+				combined(root2, cq2, cb, user, p, DashboardFacet.SPOC),
+				cb.isNull(root2.get("portalReporter")),
+				cb.isNotNull(root2.get("jiraReporterEmail")),
+				cb.greaterThan(cb.length(cb.trim(root2.get("jiraReporterEmail"))), 0));
 		cq2.distinct(true);
-		cq2.orderBy(cb.asc(root2.get("jiraAssigneeEmail")));
+		cq2.orderBy(cb.asc(root2.get("jiraReporterEmail")));
 		List<AssigneeOption> jiraOnly = entityManager.createQuery(cq2).getResultList().stream()
 				.map(t -> {
 					String email = t.get(0, String.class);
