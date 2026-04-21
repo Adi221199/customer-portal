@@ -40,4 +40,11 @@ public interface IssueRepository extends JpaRepository<Issue, UUID>, JpaSpecific
 	List<Issue> findByAssignee_Id(UUID assigneeId);
 
 	List<Issue> findByCreatedBy_Id(UUID createdById);
+
+	/**
+	 * Distinct non-blank environment values. Sorting is done in Java — PostgreSQL rejects
+	 * {@code SELECT DISTINCT ... ORDER BY lower(trim(...))} when the ORDER BY expression is not in the select list.
+	 */
+	@Query("select distinct i.environment from Issue i where i.environment is not null and length(trim(i.environment)) > 0")
+	List<String> findDistinctNonBlankEnvironments();
 }

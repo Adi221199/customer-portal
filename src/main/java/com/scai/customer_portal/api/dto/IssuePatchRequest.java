@@ -6,7 +6,10 @@ import jakarta.validation.constraints.Size;
 
 import java.time.LocalDate;
 
-/** Gap-fill patch: each property applies only if the issue value is still empty (see service rules). */
+/**
+ * Patch body: most fields are gap-fill (only applied when the stored value is still empty).
+ * {@code rcaDescription} is the exception — it is applied whenever present so users can revise RCA text.
+ */
 public record IssuePatchRequest(
 		LocalDate closingDate,
 		@Size(max = 500) String module,

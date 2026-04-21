@@ -2,6 +2,8 @@ package com.scai.customer_portal.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.scai.customer_portal.api.dto.BulkJiraImportRequest;
 import com.scai.customer_portal.config.JiraProperties;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -12,7 +14,12 @@ import org.springframework.web.client.RestClientException;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Base64;
+import java.util.List;
+import java.util.Locale;
+import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReference;
 
 @Service
@@ -28,6 +35,8 @@ public class JiraRemoteService {
 	 */
 	private final AtomicReference<String> customerFieldIdCache = new AtomicReference<>();
 	private final AtomicReference<String> environmentFieldIdCache = new AtomicReference<>();
+
+	private final ConcurrentHashMap<String, Optional<String>> jiraUserEmailByAccountIdCache = new ConcurrentHashMap<>();
 
 	public JiraRemoteService(JiraProperties jiraProperties, ObjectMapper objectMapper) {
 		this.jiraProperties = jiraProperties;
@@ -67,6 +76,222 @@ public class JiraRemoteService {
 		ensureJiraFieldMetadataLoaded();
 		String e = environmentFieldIdCache.get();
 		return e != null && !e.isBlank() ? e : null;
+	}
+
+	/** Same field id logic as {@link #extractEnvironmentValueFromFields(JsonNode)} but for JQL / search. */
+	private String environmentFieldIdForSearch() {
+		String fieldId = jiraProperties.environmentFieldId();
+		if (fieldId != null && !fieldId.isBlank()) {
+			return fieldId.trim();
+		}
+		return resolveEnvironmentFieldId();
+	}
+
+	/**
+	 * Max issues to enumerate in one bulk-import run (see {@code jira.bulk-import-max-total}).
+	 */
+	public int configuredBulkImportMaxTotal() {
+		Integer m = jiraProperties.bulkImportMaxTotal();
+		return m != null && m > 0 ? m : 2000;
+	}
+
+	/**
+	 * Best-effort: Jira often omits {@code emailAddress} on embedded users; {@code GET /rest/api/3/user} may return it
+	 * when the integration account can browse users. Cached per account id.
+	 */
+	public String lookupUserEmailByAccountId(String accountId) {
+		if (accountId == null || accountId.isBlank() || !jiraProperties.hasApiCredentials() || !jiraProperties.hasBaseUrl()) {
+			return null;
+		}
+		return jiraUserEmailByAccountIdCache.computeIfAbsent(accountId.trim(), this::fetchUserEmailOnce)
+				.orElse(null);
+	}
+
+	private Optional<String> fetchUserEmailOnce(String accountId) {
+		try {
+			String body = authorizedClient().get()
+					.uri("/rest/api/3/user?accountId={aid}", accountId)
+					.retrieve()
+					.body(String.class);
+			JsonNode n = objectMapper.readTree(body);
+			String email = n.path("emailAddress").asText(null);
+			if (email != null && !email.isBlank()) {
+				return Optional.of(email.trim());
+			}
+			return Optional.empty();
+		}
+		catch (Exception e) {
+			return Optional.empty();
+		}
+	}
+
+	/**
+	 * Builds JQL for bulk import: optional equality on Customer / Environment / projects, optional strict
+	 * non-empty Customer+Environment, optional {@code jira.bulk-import-extra-jql}.
+	 */
+	public String buildBulkImportJql(BulkJiraImportRequest filter) {
+		if (!jiraProperties.hasApiCredentials() || !jiraProperties.hasBaseUrl()) {
+			throw new IllegalArgumentException("Jira is not configured (base URL and API credentials required)");
+		}
+		String customerFieldId = resolveCustomerFieldId();
+		String envFieldId = environmentFieldIdForSearch();
+		boolean strict = filter.strictCustomerAndEnv();
+		if (strict) {
+			if (customerFieldId == null || customerFieldId.isBlank()) {
+				throw new IllegalArgumentException(
+						"Could not resolve Jira Customer field id (expected a field named Customer).");
+			}
+			if (envFieldId == null || envFieldId.isBlank()) {
+				throw new IllegalArgumentException(
+						"Could not resolve Environment field id: set jira.environment-field-id or add Env/Environment in Jira.");
+			}
+		}
+		else {
+			boolean narrowedByProject = filter.projectKeys() != null && !filter.projectKeys().isEmpty();
+			boolean narrowedByCustomer = filter.customerNames() != null && !filter.customerNames().isEmpty();
+			boolean narrowedByEnv = filter.environments() != null && !filter.environments().isEmpty();
+			String extraProp = jiraProperties.bulkImportExtraJql();
+			boolean narrowedByProp = extraProp != null && !extraProp.isBlank();
+			if (!narrowedByProject && !narrowedByCustomer && !narrowedByEnv && !narrowedByProp) {
+				throw new IllegalArgumentException(
+						"When requireCustomerAndEnvironmentNonEmpty is false, specify projectKeys, customerNames, environments, and/or jira.bulk-import-extra-jql.");
+			}
+			if (narrowedByCustomer && (customerFieldId == null || customerFieldId.isBlank())) {
+				throw new IllegalArgumentException("Could not resolve Jira Customer field id for JQL.");
+			}
+			if (narrowedByEnv && (envFieldId == null || envFieldId.isBlank())) {
+				throw new IllegalArgumentException("Could not resolve Environment field id for JQL.");
+			}
+		}
+		List<String> clauses = new ArrayList<>();
+		if (strict && customerFieldId != null && envFieldId != null) {
+			clauses.add(customerFieldId + " is not EMPTY");
+			clauses.add(envFieldId + " is not EMPTY");
+		}
+		if (filter.customerNames() != null && !filter.customerNames().isEmpty()) {
+			if (customerFieldId == null || customerFieldId.isBlank()) {
+				throw new IllegalArgumentException("Could not resolve Jira Customer field id for JQL.");
+			}
+			List<String> names = filter.customerNames().stream()
+					.map(String::trim)
+					.filter(s -> !s.isBlank())
+					.distinct()
+					.toList();
+			if (!names.isEmpty()) {
+				String orExpr = names.stream()
+						.map(JqlLiterals::quotedString)
+						.map(q -> customerFieldId + " = " + q)
+						.reduce((a, b) -> a + " OR " + b)
+						.orElse("");
+				clauses.add("(" + orExpr + ")");
+			}
+		}
+		if (filter.environments() != null && !filter.environments().isEmpty()) {
+			if (envFieldId == null || envFieldId.isBlank()) {
+				throw new IllegalArgumentException("Environment filter set but Environment field id is unknown.");
+			}
+			List<String> envs = filter.environments().stream()
+					.map(String::trim)
+					.filter(s -> !s.isBlank())
+					.distinct()
+					.toList();
+			if (!envs.isEmpty()) {
+				String orExpr = envs.stream()
+						.map(JqlLiterals::quotedString)
+						.map(q -> envFieldId + " = " + q)
+						.reduce((a, b) -> a + " OR " + b)
+						.orElse("");
+				clauses.add("(" + orExpr + ")");
+			}
+		}
+		if (filter.projectKeys() != null && !filter.projectKeys().isEmpty()) {
+			List<String> keys = filter.projectKeys().stream()
+					.map(String::trim)
+					.filter(s -> !s.isBlank())
+					.map(s -> s.replaceAll("[^A-Za-z0-9_]", "").toUpperCase(Locale.ROOT))
+					.filter(s -> !s.isBlank() && s.length() <= 32)
+					.distinct()
+					.toList();
+			if (!keys.isEmpty()) {
+				clauses.add("project in (" + String.join(", ", keys) + ")");
+			}
+		}
+		String extra = jiraProperties.bulkImportExtraJql();
+		if (extra != null && !extra.isBlank()) {
+			clauses.add("(" + extra.trim() + ")");
+		}
+		if (clauses.isEmpty()) {
+			throw new IllegalArgumentException("No JQL clauses built for bulk import.");
+		}
+		return String.join(" AND ", clauses) + " ORDER BY key ASC";
+	}
+
+	/**
+	 * {@code POST /rest/api/3/search/jql} in pages; returns issue keys only (full issue is still fetched per key).
+	 */
+	public List<String> searchIssueKeysForBulkImport(BulkJiraImportRequest filter, int maxTotal) {
+		if (maxTotal <= 0) {
+			return List.of();
+		}
+		String jql = buildBulkImportJql(filter);
+		return searchIssueKeysByJql(jql, maxTotal);
+	}
+
+	private List<String> searchIssueKeysByJql(String jql, int maxTotal) {
+		List<String> keys = new ArrayList<>();
+		final int pageCap = 100;
+		String nextPageToken = null;
+		try {
+			while (keys.size() < maxTotal) {
+				int remaining = maxTotal - keys.size();
+				int pageSize = Math.min(pageCap, Math.max(1, remaining));
+				ObjectNode req = objectMapper.createObjectNode();
+				req.put("jql", jql);
+				req.put("maxResults", pageSize);
+				req.putArray("fields").add("key");
+				if (nextPageToken != null && !nextPageToken.isBlank()) {
+					req.put("nextPageToken", nextPageToken);
+				}
+				String payload = objectMapper.writeValueAsString(req);
+				String resp = authorizedClient().post()
+						.uri("/rest/api/3/search/jql")
+						.contentType(MediaType.APPLICATION_JSON)
+						.body(payload)
+						.retrieve()
+						.body(String.class);
+				JsonNode root = objectMapper.readTree(resp);
+				JsonNode issues = root.path("issues");
+				if (!issues.isArray() || issues.isEmpty()) {
+					break;
+				}
+				for (JsonNode issue : issues) {
+					String key = issue.path("key").asText(null);
+					if (key != null && !key.isBlank()) {
+						keys.add(key);
+						if (keys.size() >= maxTotal) {
+							break;
+						}
+					}
+				}
+				if (keys.size() >= maxTotal) {
+					break;
+				}
+				if (root.path("isLast").asBoolean(false)) {
+					break;
+				}
+				nextPageToken = root.path("nextPageToken").asText(null);
+				if (nextPageToken == null || nextPageToken.isBlank()) {
+					break;
+				}
+			}
+		}
+		catch (RestClientException e) {
+			throw new IllegalArgumentException("Jira search failed: " + e.getMessage(), e);
+		}
+		catch (Exception e) {
+			throw new IllegalArgumentException("Jira search failed: " + e.getMessage(), e);
+		}
+		return keys;
 	}
 
 	private void ensureJiraFieldMetadataLoaded() {

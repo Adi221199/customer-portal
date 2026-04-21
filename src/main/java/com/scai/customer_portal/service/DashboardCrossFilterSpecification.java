@@ -3,7 +3,10 @@ package com.scai.customer_portal.service;
 import com.scai.customer_portal.dashboard.DashboardFacet;
 import com.scai.customer_portal.dashboard.DashboardFilterParams;
 import com.scai.customer_portal.dashboard.RcaFilter;
+import com.scai.customer_portal.domain.AppUser;
 import com.scai.customer_portal.domain.Issue;
+import jakarta.persistence.criteria.Join;
+import jakarta.persistence.criteria.JoinType;
 import jakarta.persistence.criteria.Predicate;
 import org.springframework.data.jpa.domain.Specification;
 
@@ -11,6 +14,7 @@ import java.time.LocalDate;
 import java.time.YearMonth;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * Dashboard slicers. When building distinct values for facet {@code omit}, that facet's filter is omitted so the
@@ -29,8 +33,35 @@ public final class DashboardCrossFilterSpecification {
 			if (shouldApply(DashboardFacet.ORGANIZATION, omit) && p.organizationIds() != null && !p.organizationIds().isEmpty()) {
 				ps.add(root.get("organization").get("id").in(p.organizationIds()));
 			}
-			if (shouldApply(DashboardFacet.ASSIGNEE, omit) && p.assigneeIds() != null && !p.assigneeIds().isEmpty()) {
-				ps.add(root.get("assignee").get("id").in(p.assigneeIds()));
+			if (shouldApply(DashboardFacet.ASSIGNEE, omit)) {
+				boolean hasIds = p.assigneeIds() != null && !p.assigneeIds().isEmpty();
+				boolean hasEmails = p.assigneeEmails() != null && !p.assigneeEmails().isEmpty();
+				if (hasIds || hasEmails) {
+					List<Predicate> assigneeOr = new ArrayList<>();
+					if (hasIds) {
+						assigneeOr.add(root.get("assignee").get("id").in(p.assigneeIds()));
+					}
+					if (hasEmails) {
+						Join<Issue, AppUser> asg = root.join("assignee", JoinType.LEFT);
+						List<Predicate> emailPreds = new ArrayList<>();
+						for (String raw : p.assigneeEmails()) {
+							if (raw == null || raw.isBlank()) {
+								continue;
+							}
+							String em = raw.trim().toLowerCase(Locale.ROOT);
+							Predicate portal = cb.and(cb.isNotNull(asg.get("id")), cb.equal(cb.lower(asg.get("email")), em));
+							Predicate jiraOnly = cb.and(cb.isNull(asg.get("id")),
+									cb.equal(cb.lower(root.get("jiraAssigneeEmail")), em));
+							emailPreds.add(cb.or(portal, jiraOnly));
+						}
+						if (!emailPreds.isEmpty()) {
+							assigneeOr.add(cb.or(emailPreds.toArray(Predicate[]::new)));
+						}
+					}
+					if (!assigneeOr.isEmpty()) {
+						ps.add(cb.or(assigneeOr.toArray(Predicate[]::new)));
+					}
+				}
 			}
 			if (shouldApply(DashboardFacet.SEVERITY, omit) && p.severities() != null && !p.severities().isEmpty()) {
 				ps.add(root.get("severity").in(p.severities()));

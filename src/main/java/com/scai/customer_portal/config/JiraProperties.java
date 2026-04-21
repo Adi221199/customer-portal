@@ -13,7 +13,14 @@ public record JiraProperties(
 		/** Optional: Jira custom field whose value matches a portal pod name (e.g. EDM, DPAI). */
 		String podFieldId,
 		/** Optional: Jira custom field for RCA / root-cause text (plain or Atlassian Document Format). */
-		String rcaFieldId
+		String rcaFieldId,
+		/**
+		 * Optional AND fragment for {@code POST /api/issues/import-jira-bulk} JQL (e.g. {@code project in (EDM, DPAI)}).
+		 * Appended to the non-empty Customer + Environment filter.
+		 */
+		String bulkImportExtraJql,
+		/** Max issues to pull from Jira search per bulk run (pagination stops when reached). Default 2000 when unset. */
+		Integer bulkImportMaxTotal
 ) {
 
 	/** API token + Atlassian account email (integration user — not per portal end-user). */
