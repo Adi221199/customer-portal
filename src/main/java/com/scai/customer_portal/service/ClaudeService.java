@@ -72,7 +72,7 @@ public class ClaudeService {
 //@Service
 //public class ClaudeService {
 //
-//    private static final String API_KEY = "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";
+//    private static final String API_KEY = "";
 //    private static final String URL = "https://api.openai.com/v1/chat/completions";
 //
 //    private final OkHttpClient client = new OkHttpClient();
