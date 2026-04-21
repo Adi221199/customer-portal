@@ -33,33 +33,33 @@ public final class DashboardCrossFilterSpecification {
 			if (shouldApply(DashboardFacet.ORGANIZATION, omit) && p.organizationIds() != null && !p.organizationIds().isEmpty()) {
 				ps.add(root.get("organization").get("id").in(p.organizationIds()));
 			}
-			if (shouldApply(DashboardFacet.ASSIGNEE, omit)) {
-				boolean hasIds = p.assigneeIds() != null && !p.assigneeIds().isEmpty();
-				boolean hasEmails = p.assigneeEmails() != null && !p.assigneeEmails().isEmpty();
+			if (shouldApply(DashboardFacet.SPOC, omit)) {
+				boolean hasIds = p.spocPortalUserIds() != null && !p.spocPortalUserIds().isEmpty();
+				boolean hasEmails = p.spocEmails() != null && !p.spocEmails().isEmpty();
 				if (hasIds || hasEmails) {
-					List<Predicate> assigneeOr = new ArrayList<>();
+					List<Predicate> spocOr = new ArrayList<>();
+					Join<Issue, AppUser> pr = root.join("portalReporter", JoinType.LEFT);
 					if (hasIds) {
-						assigneeOr.add(root.get("assignee").get("id").in(p.assigneeIds()));
+						spocOr.add(pr.get("id").in(p.spocPortalUserIds()));
 					}
 					if (hasEmails) {
-						Join<Issue, AppUser> asg = root.join("assignee", JoinType.LEFT);
 						List<Predicate> emailPreds = new ArrayList<>();
-						for (String raw : p.assigneeEmails()) {
+						for (String raw : p.spocEmails()) {
 							if (raw == null || raw.isBlank()) {
 								continue;
 							}
 							String em = raw.trim().toLowerCase(Locale.ROOT);
-							Predicate portal = cb.and(cb.isNotNull(asg.get("id")), cb.equal(cb.lower(asg.get("email")), em));
-							Predicate jiraOnly = cb.and(cb.isNull(asg.get("id")),
-									cb.equal(cb.lower(root.get("jiraAssigneeEmail")), em));
+							Predicate portal = cb.and(cb.isNotNull(pr.get("id")), cb.equal(cb.lower(pr.get("email")), em));
+							Predicate jiraOnly = cb.and(cb.isNull(pr.get("id")),
+									cb.equal(cb.lower(root.get("jiraReporterEmail")), em));
 							emailPreds.add(cb.or(portal, jiraOnly));
 						}
 						if (!emailPreds.isEmpty()) {
-							assigneeOr.add(cb.or(emailPreds.toArray(Predicate[]::new)));
+							spocOr.add(cb.or(emailPreds.toArray(Predicate[]::new)));
 						}
 					}
-					if (!assigneeOr.isEmpty()) {
-						ps.add(cb.or(assigneeOr.toArray(Predicate[]::new)));
+					if (!spocOr.isEmpty()) {
+						ps.add(cb.or(spocOr.toArray(Predicate[]::new)));
 					}
 				}
 			}

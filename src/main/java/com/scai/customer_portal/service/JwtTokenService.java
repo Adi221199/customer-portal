@@ -11,7 +11,9 @@ import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Objects;
 import java.util.stream.Collectors;
 
 @Service
@@ -39,9 +41,14 @@ public class JwtTokenService {
 		if (user.getOrganization() != null) {
 			claims.claim("organizationId", user.getOrganization().getId().toString());
 		}
-		if (user.getPods() != null && !user.getPods().isEmpty()) {
-			List<String> podIds = user.getPods().stream().map(p -> p.getId().toString()).sorted().toList();
-			claims.claim("podIds", podIds);
+		if (user.getAssignedModules() != null && !user.getAssignedModules().isEmpty()) {
+			List<String> mods = user.getAssignedModules().stream()
+					.filter(Objects::nonNull)
+					.map(String::trim)
+					.filter(s -> !s.isEmpty())
+					.sorted(Comparator.comparing(s -> s.toLowerCase()))
+					.toList();
+			claims.claim("assignedModules", mods);
 		}
 		JwsHeader header = JwsHeader.with(MacAlgorithm.HS256).build();
 		return this.jwtEncoder.encode(JwtEncoderParameters.from(header, claims.build())).getTokenValue();

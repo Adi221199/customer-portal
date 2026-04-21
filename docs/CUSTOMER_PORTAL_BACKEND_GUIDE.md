@@ -12,18 +12,18 @@ Base URL in local development is typically: `http://localhost:8080`.
 A **web API** (JSON over HTTP) that:
 
 1. Lets **customers** and **internal 3SC staff** **register**, **log in**, and receive a **secure token** for later requests.
-2. Stores **organizations** (companies), **users**, **teams called “pods”** (e.g. EDM, DPAI), and **support issues** that are usually **linked to Jira tickets**.
+2. Stores **organizations** (companies), **users**, **Jira module / project keys** (e.g. EDM, DPAI) for **SC_LEAD** scope, and **support issues** that are usually **linked to Jira tickets**.
 3. Connects to **Jira Cloud** (server-side, using configured credentials) to **import** or **refresh** issue data. Manual **sync-from-Jira** can refresh a full row; optional **background sync** only updates **progress** fields (status, etc.) so portal-filled metadata is not wiped.
-4. **Restricts who sees what**: not every user sees every issue — rules depend on **role**, **organization**, **pod**, and whether the user is the **Jira reporter** on a ticket.
+4. **Restricts who sees what**: not every user sees every issue — rules depend on **role**, **organization**, **module** (for leads), and whether the user is the **Jira reporter** on a ticket.
 5. Exposes **dashboard / analytics APIs** (aggregates + slicers) that respect the **same visibility** as issue list, support **cross-filtering** (Power BI–style), and allow **per-chart access control** to be plugged in later.
 
 ### Main actors (roles)
 
 | Role | Who they are (conceptually) |
 |------|-----------------------------|
-| **SC_ADMIN** | Full internal admin: manage users, pods, see all issues. |
-| **SC_LEAD** | Internal lead; **SC_ADMIN** assigns **one or more pods**. They see issues whose **pod** is in that assigned set (no org/pod on the user otherwise, same as admin). |
-| **SC_AGENT** | Internal agent; **visibility** is still by **portal reporter** or **Jira reporter email** match. **Pod assignments** (one or more) control which pods they may set on issues and how the pod field is resolved on import when Jira does not map cleanly. |
+| **SC_ADMIN** | Full internal admin: manage users, see all issues. |
+| **SC_LEAD** | Internal lead; **SC_ADMIN** assigns **one or more modules** (Jira project keys). They see issues whose **module** matches that set (no org on the user otherwise, same as admin). |
+| **SC_AGENT** | Internal agent; **visibility** is by **portal reporter** or **Jira reporter email** match. |
 | **CUSTOMER_ADMIN** | Customer org admin; sees all issues for **their organization**. |
 | **CUSTOMER_USER** | End customer user; sees issues in **their org** if they **created/imported** the row, are **assignee**, or their **email matches Jira reporter** on that issue. |
 
@@ -201,8 +201,7 @@ Gap-fill update only: the body supports **these optional fields** and nothing el
   "category": "Bug",
   "severity": 2,
   "rcaDescription": "Root cause text",
-  "organizationName": "Jockey",
-  "podName": "EDM"
+  "organizationName": "Jockey"
 }
 ```
 
@@ -212,14 +211,13 @@ Gap-fill update only: the body supports **these optional fields** and nothing el
 - `module`, `environment`, `category`, `rcaDescription` — set only if that field is still empty; **empty string** in JSON clears the slot when it was still empty.
 - `severity` — **1** = high, **2** = moderate, **3** = low; applied only if **`severity` is still null**.
 - `organizationName` — trimmed, case-insensitive; find-or-create organization by name. Applied only if the issue has **no organization** or it is still the internal default **3SC** (typical when Jira had no Customer). If the issue is already tied to a real customer org, this field is **ignored**.
-- `podName` — trimmed, case-insensitive pod name; applied only if the issue **has no pod yet**. **Only** SC_ADMIN, SC_LEAD, SC_AGENT may set pod (same pod-assignment rules as before). Ignored if a pod is already set.
 
 To **re-align the whole issue with Jira** (status, description, assignee, etc.), use **`POST /api/issues/{id}/sync-from-jira`** (see §4.3), not this PATCH.
 
 **Who may patch (summary):**
 
 - **SC_ADMIN:** all issues.
-- **SC_LEAD:** issues they can view (issue **pod** must be in their **assigned pods**).
+- **SC_LEAD:** issues they can view (issue **module** / project key must match one of their **assigned modules**).
 - **SC_AGENT:** issues they can view (reporter match / email match).
 - **CUSTOMER_ADMIN:** issues in their organization.
 - **CUSTOMER_USER:** generally **cannot** PATCH (view-only paths for reporter matching).
@@ -245,8 +243,8 @@ To **re-align the whole issue with Jira** (status, description, assignee, etc.),
 ```json
 {
   "roles": ["SC_AGENT"],
-  "organizationName": "Acme Corp",
-  "podNames": ["Delivery Pod 1", "EDM"],
+  "organizationName": "3SC",
+  "moduleNames": ["EDM"],
   "enabled": true
 }
 ```
@@ -259,38 +257,17 @@ To **re-align the whole issue with Jira** (status, description, assignee, etc.),
 - **Organization** (optional; **omit both** `organizationId` and `organizationName` to leave unchanged):
   - `organizationId`: if set, that organization is applied (takes precedence over `organizationName`).
   - `organizationName`: trimmed, **case-insensitive** lookup; **`""`** (empty string) **clears** organization.
-- **Pods** (for **SC_LEAD** / **SC_AGENT**; others usually have none):
-  - `podNames`: if present (`null` = don’t change), list of pod **names** (trimmed, case-insensitive). **`[]`** clears all; non-empty **replaces** the set. When both `podNames` and `podIds` are sent, **`podNames` wins**.
-  - `podIds`: same semantics as `podNames` but by UUID, used only when `podNames` is omitted or **`null`**.
+- **Modules** (for **SC_LEAD**; Jira project keys such as `EDM`, `DPAI`):
+  - `moduleNames`: if present (`null` = don’t change), list of module codes (trimmed). **`[]`** clears all; non-empty **replaces** the set.
 - `enabled`: optional; if omitted, enabled flag unchanged.
 
 **Response:** `200 OK` — `UserResponse`.
 
 ---
 
-### 4.5 Admin — pods `/api/admin/pods`
+### 4.5 Admin pods endpoint (removed)
 
-**Auth:** Bearer + **SC_ADMIN** only.
-
-#### GET `/api/admin/pods`
-
-**Response:** `200 OK` — array of `PodResponse`.
-
----
-
-#### POST `/api/admin/pods`
-
-**Body:**
-
-```json
-{
-  "name": "EDM"
-}
-```
-
-**Response:** `201 Created` — `PodResponse` `{ "id": "uuid", "name": "EDM" }`.
-
-Pod **names** should align with Jira when using pod mapping (optional `jira.pod-field-id` or module name match).
+Separate **pod** CRUD has been removed. **SC_LEAD** scope uses **`moduleNames`** on `PATCH /api/admin/users/{id}` (Jira project keys from imported issues).
 
 ---
 
@@ -304,17 +281,14 @@ Pod **names** should align with Jira when using pod mapping (optional `jira.pod-
   "enabled": true,
   "organizationId": "uuid",
   "organizationName": "Jockey",
-  "pods": [
-    { "id": "uuid", "name": "Delivery Pod 1" },
-    { "id": "uuid", "name": "EDM" }
-  ],
+  "assignedModules": ["EDM"],
   "roles": ["CUSTOMER_USER"]
 }
 ```
 
-`organizationId` / `organizationName` may be `null` if not set. `pods` is an array (often **empty** for customers and **SC_ADMIN**); each entry has `id` and `name`.
+`organizationId` / `organizationName` may be `null` if not set. `assignedModules` is a string array (often **empty** for customers and **SC_ADMIN**).
 
-**JWT (optional):** when the user has at least one assigned pod, the access token may include a **`podIds`** claim (array of UUID strings) for clients that need it; otherwise the claim is omitted.
+**JWT (optional):** when the user has at least one assigned module, the access token may include an **`assignedModules`** claim (array of strings); otherwise the claim is omitted.
 
 ---
 
@@ -338,8 +312,6 @@ Pod **names** should align with Jira when using pod mapping (optional `jira.pod-
   "portalStatus": "IN_PROGRESS",
   "organizationId": "uuid",
   "organizationName": "Jockey",
-  "podId": "uuid",
-  "podName": "EDM",
   "assigneeId": null,
   "assigneeEmail": null,
   "portalReporterId": null,
@@ -370,7 +342,7 @@ Allowed strings in JSON:
 
 **Auth:** Bearer required for all routes below.  
 **Visibility:** Every aggregate counts only **issues the current user is allowed to see** (same rules as `GET /api/issues`).  
-**Performance:** Queries use `COUNT(DISTINCT issue.id)` with **DB indexes** on `organization_id`, `issue_date`, `environment`, `module`, `category`, `severity`, `assignee_id`, `jira_issue_key`, `pod_id`. For very large datasets, consider read replicas or materialized views later.
+**Performance:** Queries use `COUNT(DISTINCT issue.id)` with **DB indexes** on `organization_id`, `issue_date`, `environment`, `module`, `category`, `severity`, `assignee_id`, `jira_issue_key`. For very large datasets, consider read replicas or materialized views later.
 
 #### Cross-filtering (frontend pattern — Power BI style)
 
@@ -498,8 +470,8 @@ This matches the implemented visibility rules (`IssueVisibilitySpecification` + 
 | **SC_ADMIN** | All issues. |
 | **CUSTOMER_ADMIN** | All issues whose **organization** equals the admin’s organization. |
 | **CUSTOMER_USER** | Issues in **same organization** AND (**created the import row** OR **assignee** OR **email matches `jiraReporterEmail`**). |
-| **SC_LEAD** | Issues whose **pod** is **in** the lead’s **assigned pods** (must have at least one pod to see issues via this rule). |
-| **SC_AGENT** | Issues where **`portalReporter`** is that user **OR** **`jiraReporterEmail`** matches login email (case-insensitive). Pod assignments do **not** further filter the list; they apply to **pod field** behaviour on import/patch. |
+| **SC_LEAD** | Issues whose **module** / project key is **in** the lead’s **assigned modules** (must have at least one module to see issues via this rule). |
+| **SC_AGENT** | Issues where **`portalReporter`** is that user **OR** **`jiraReporterEmail`** matches login email (case-insensitive). |
 
 **Important for demos:** Customer registration must use an **organization name** that matches the Jira **Customer** value for that ticket (e.g. **Jockey**), otherwise the customer user will not pass the “same organization” check.
 
@@ -527,7 +499,6 @@ Jira credentials in `application.properties` (or environment) are used **only on
 - `jira.module-field-id` — else module may fall back to Jira **components**
 - `jira.environment-field-id` — overrides Env auto-detect
 - `jira.category-field-id` — else issue type / labels
-- `jira.pod-field-id` — value should match a portal **Pod** `name`
 - `jira.rca-field-id` — when set, RCA in portal **mirrors** Jira (empty in Jira clears portal RCA on sync)
 
 ### Background sync (optional)
@@ -535,7 +506,7 @@ Jira credentials in `application.properties` (or environment) are used **only on
 - `jira.background-sync-enabled` — `true` to run a scheduled job
 - `jira.background-sync-cron` — Spring 6-field cron (e.g. `0 */15 * * * *` every 15 minutes for testing; use `0 0 */4 * * *` for every 4 hours in production). If unset, the job’s code default is every 4 hours.
 
-When enabled, the job re-fetches **all** issues that have a `jiraIssueKey` and updates **only progress-oriented** fields from Jira: **status** (and derived portal status), **summary** (if non-empty in Jira), **resolution / closing date** (only when Jira has a resolution date), **severity** (only when Jira has a priority name), plus **`lastSyncedAt`** / snapshot. It does **not** overwrite **organization**, **pod**, **environment**, **module**, **category**, **RCA**, **reporter**, **assignee**, **description**, **issue date**, etc., so values you fixed in the portal are not cleared when Jira leaves those fields empty. Does not change **who imported** the issue (`createdBy`). For a **full** row refresh, use **`POST /api/issues/{id}/sync-from-jira`** (or import by key again).
+When enabled, the job re-fetches **all** issues that have a `jiraIssueKey` and updates **only progress-oriented** fields from Jira: **status** (and derived portal status), **summary** (if non-empty in Jira), **resolution / closing date** (only when Jira has a resolution date), **severity** (only when Jira has a priority name), plus **`lastSyncedAt`** / snapshot. It does **not** overwrite **organization**, **environment**, **module**, **category**, **RCA**, **reporter**, **assignee**, **description**, **issue date**, etc., so values you fixed in the portal are not cleared when Jira leaves those fields empty. Does not change **who imported** the issue (`createdBy`). For a **full** row refresh, use **`POST /api/issues/{id}/sync-from-jira`** (or import by key again).
 
 ### Atlassian API tokens
 
@@ -578,7 +549,7 @@ Exact body shape: refer to `ApiError` in the codebase.
 | Dashboard aggregates | `DashboardService`, `DashboardController` |
 | Chart ACL (pluggable) | `DashboardChartAccessPolicy`, `PermissiveDashboardChartAccessPolicy` |
 | Issue rules / sync | `IssueService`, `JiraIssueBackgroundSyncJob` |
-| Admin | `AdminUserService`, `AdminPodService` |
+| Admin | `AdminUserService` |
 | Config | `JiraProperties`, `JwtProperties`, `SecurityConfig`, `DataSeed`, `DefaultInternalOrganizationBootstrap` |
 
 ---

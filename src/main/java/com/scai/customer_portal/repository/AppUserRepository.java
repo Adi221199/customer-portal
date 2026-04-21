@@ -14,11 +14,11 @@ public interface AppUserRepository extends JpaRepository<AppUser, UUID> {
 
 	boolean existsByEmailIgnoreCase(String email);
 
-	@EntityGraph(attributePaths = { "organization", "pods", "roles" })
+	@EntityGraph(attributePaths = { "organization", "assignedModules", "roles" })
 	@Override
 	List<AppUser> findAll();
 
-	@EntityGraph(attributePaths = { "organization", "pods", "roles" })
+	@EntityGraph(attributePaths = { "organization", "assignedModules", "roles" })
 	@Override
 	Optional<AppUser> findById(UUID id);
 }

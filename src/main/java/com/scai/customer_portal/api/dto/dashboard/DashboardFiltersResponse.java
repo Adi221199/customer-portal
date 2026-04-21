@@ -4,7 +4,8 @@ import java.util.List;
 
 public record DashboardFiltersResponse(
 		List<OrganizationOption> clients,
-		List<AssigneeOption> deliverySpocs,
+		/** Distinct reporters (SPOC): portal-linked reporters and Jira-only reporter emails on visible issues. */
+		List<AssigneeOption> spocs,
 		List<Integer> severities,
 		List<String> environments,
 		List<String> months,

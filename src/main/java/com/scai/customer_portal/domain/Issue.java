@@ -31,8 +31,7 @@ import java.util.UUID;
 		@Index(name = "idx_issues_category", columnList = "category"),
 		@Index(name = "idx_issues_severity", columnList = "severity"),
 		@Index(name = "idx_issues_assignee_id", columnList = "assignee_id"),
-		@Index(name = "idx_issues_jira_issue_key", columnList = "jira_issue_key"),
-		@Index(name = "idx_issues_pod_id", columnList = "pod_id")
+		@Index(name = "idx_issues_jira_issue_key", columnList = "jira_issue_key")
 })
 @Getter
 @Setter
@@ -84,10 +83,6 @@ public class Issue {
 	@ManyToOne(fetch = FetchType.LAZY, optional = false)
 	@JoinColumn(name = "organization_id", nullable = false)
 	private Organization organization;
-
-	@ManyToOne(fetch = FetchType.LAZY)
-	@JoinColumn(name = "pod_id")
-	private Pod pod;
 
 	@ManyToOne(fetch = FetchType.LAZY)
 	@JoinColumn(name = "assignee_id")

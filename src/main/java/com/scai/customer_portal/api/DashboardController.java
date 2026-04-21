@@ -45,8 +45,8 @@ public class DashboardController {
 	@GetMapping("/filters")
 	public DashboardFiltersResponse filters(
 			@RequestParam(required = false) List<UUID> organizationId,
-			@RequestParam(required = false) List<UUID> assigneeId,
-			@RequestParam(required = false) List<String> assigneeEmail,
+			@RequestParam(required = false) List<UUID> spocUserId,
+			@RequestParam(required = false) List<String> spocEmail,
 			@RequestParam(required = false) List<Integer> severity,
 			@RequestParam(required = false) List<String> environment,
 			@RequestParam(required = false) List<String> month,
@@ -56,15 +56,15 @@ public class DashboardController {
 			@RequestParam(required = false) List<String> jiraKey,
 			@RequestParam(required = false) List<String> portalStatus) {
 		return dashboardService.filters(params(
-				organizationId, assigneeId, assigneeEmail, severity, environment, month, rca, category, module, jiraKey, portalStatus));
+				organizationId, spocUserId, spocEmail, severity, environment, month, rca, category, module, jiraKey, portalStatus));
 	}
 
 	@GetMapping("/charts/{chartPath}")
 	public DashboardChartResponse chart(
 			@PathVariable String chartPath,
 			@RequestParam(required = false) List<UUID> organizationId,
-			@RequestParam(required = false) List<UUID> assigneeId,
-			@RequestParam(required = false) List<String> assigneeEmail,
+			@RequestParam(required = false) List<UUID> spocUserId,
+			@RequestParam(required = false) List<String> spocEmail,
 			@RequestParam(required = false) List<Integer> severity,
 			@RequestParam(required = false) List<String> environment,
 			@RequestParam(required = false) List<String> month,
@@ -82,15 +82,15 @@ public class DashboardController {
 		}
 		return dashboardService.chart(
 				chartId,
-				params(organizationId, assigneeId, assigneeEmail, severity, environment, month, rca, category, module, jiraKey, portalStatus));
+				params(organizationId, spocUserId, spocEmail, severity, environment, month, rca, category, module, jiraKey, portalStatus));
 	}
 
 	@GetMapping("/aggregate")
 	public DashboardAggregateResponse aggregate(
 			@RequestParam String groupBy,
 			@RequestParam(required = false) List<UUID> organizationId,
-			@RequestParam(required = false) List<UUID> assigneeId,
-			@RequestParam(required = false) List<String> assigneeEmail,
+			@RequestParam(required = false) List<UUID> spocUserId,
+			@RequestParam(required = false) List<String> spocEmail,
 			@RequestParam(required = false) List<Integer> severity,
 			@RequestParam(required = false) List<String> environment,
 			@RequestParam(required = false) List<String> month,
@@ -107,13 +107,13 @@ public class DashboardController {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid groupBy: " + groupBy);
 		}
 		return dashboardService.aggregate(dim, params(
-				organizationId, assigneeId, assigneeEmail, severity, environment, month, rca, category, module, jiraKey, portalStatus));
+				organizationId, spocUserId, spocEmail, severity, environment, month, rca, category, module, jiraKey, portalStatus));
 	}
 
 	private static DashboardFilterParams params(
 			List<UUID> organizationId,
-			List<UUID> assigneeId,
-			List<String> assigneeEmail,
+			List<UUID> spocUserId,
+			List<String> spocEmail,
 			List<Integer> severity,
 			List<String> environment,
 			List<String> month,
@@ -124,8 +124,8 @@ public class DashboardController {
 			List<String> portalStatus) {
 		return new DashboardFilterParams(
 				nullIfEmpty(organizationId),
-				nullIfEmpty(assigneeId),
-				nullIfEmpty(trimNonBlank(assigneeEmail)),
+				nullIfEmpty(spocUserId),
+				nullIfEmpty(trimNonBlank(spocEmail)),
 				nullIfEmpty(filterNulls(severity)),
 				nullIfEmpty(trimNonBlank(environment)),
 				nullIfEmpty(trimNonBlank(month)),

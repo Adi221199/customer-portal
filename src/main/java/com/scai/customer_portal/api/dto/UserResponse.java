@@ -13,7 +13,7 @@ public record UserResponse(
 		boolean enabled,
 		UUID organizationId,
 		String organizationName,
-		List<AssignedPodRef> pods,
+		List<String> assignedModules,
 		Set<PortalRole> roles
 ) {
 }
