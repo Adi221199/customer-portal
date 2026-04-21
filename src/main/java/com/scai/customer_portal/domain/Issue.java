@@ -107,6 +107,15 @@ public class Issue {
 	@Column(name = "jira_reporter_account_id")
 	private String jiraReporterAccountId;
 
+	@Column(name = "jira_assignee_account_id")
+	private String jiraAssigneeAccountId;
+
+	@Column(name = "jira_assignee_email")
+	private String jiraAssigneeEmail;
+
+	@Column(name = "jira_assignee_display_name")
+	private String jiraAssigneeDisplayName;
+
 	/** User who ran import in the portal (audit). */
 	@ManyToOne(fetch = FetchType.LAZY, optional = false)
 	@JoinColumn(name = "created_by_id", nullable = false)

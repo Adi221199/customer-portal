@@ -37,8 +37,10 @@ import java.time.format.DateTimeFormatter;
 import java.time.format.TextStyle;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.UUID;
@@ -296,8 +298,40 @@ public class DashboardService {
 		cq.where(combined(root, cq, cb, user, p, DashboardFacet.ASSIGNEE));
 		cq.distinct(true);
 		cq.orderBy(cb.asc(a.get("email")));
-		return entityManager.createQuery(cq).getResultList().stream()
+		List<AssigneeOption> portalLinked = entityManager.createQuery(cq).getResultList().stream()
 				.map(t -> new AssigneeOption(t.get(0, UUID.class), t.get(1, String.class), t.get(2, String.class)))
+				.toList();
+
+		CriteriaQuery<Tuple> cq2 = cb.createTupleQuery();
+		Root<Issue> root2 = cq2.from(Issue.class);
+		cq2.multiselect(root2.get("jiraAssigneeEmail"), root2.get("jiraAssigneeDisplayName"));
+		cq2.where(
+				combined(root2, cq2, cb, user, p, DashboardFacet.ASSIGNEE),
+				cb.isNull(root2.get("assignee")),
+				cb.isNotNull(root2.get("jiraAssigneeEmail")),
+				cb.greaterThan(cb.length(cb.trim(root2.get("jiraAssigneeEmail"))), 0));
+		cq2.distinct(true);
+		cq2.orderBy(cb.asc(root2.get("jiraAssigneeEmail")));
+		List<AssigneeOption> jiraOnly = entityManager.createQuery(cq2).getResultList().stream()
+				.map(t -> {
+					String email = t.get(0, String.class);
+					String dn = t.get(1, String.class);
+					return new AssigneeOption(null, email, dn != null && !dn.isBlank() ? dn : email);
+				})
+				.toList();
+
+		Map<String, AssigneeOption> byEmail = new LinkedHashMap<>();
+		for (AssigneeOption o : portalLinked) {
+			if (o.email() != null && !o.email().isBlank()) {
+				byEmail.put(o.email().toLowerCase(Locale.ROOT), o);
+			}
+		}
+		for (AssigneeOption o : jiraOnly) {
+			if (o.email() != null && !o.email().isBlank()) {
+				byEmail.putIfAbsent(o.email().toLowerCase(Locale.ROOT), o);
+			}
+		}
+		return byEmail.values().stream().sorted(Comparator.comparing(AssigneeOption::email, String.CASE_INSENSITIVE_ORDER))
 				.toList();
 	}
 
