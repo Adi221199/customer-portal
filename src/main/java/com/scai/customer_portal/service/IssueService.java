@@ -434,4 +434,91 @@ public class IssueService {
 				i.getCreatedBy().getEmail(),
 				i.getLastSyncedAt());
 	}
+
+	public String getTicketStatus(String jiraKey) {
+
+		Issue issue = issueRepository.findByJiraIssueKey(jiraKey)
+				.orElse(null);
+
+		if (issue == null) {
+			return "Ticket " + jiraKey + " not found in system.";
+		}
+
+		return "Ticket: " + jiraKey +
+				"\nStatus: " + issue.getJiraStatus() +
+				"\nSummary: " + issue.getTitle() +
+				"\nAssignee: " + (issue.getAssignee() != null ? issue.getAssignee().getEmail() : "Unassigned");
+	}
+	public String getCompletedThisWeek() {
+
+		List<Issue> issues = issueRepository.findAll();
+
+		java.time.LocalDate now = java.time.LocalDate.now();
+		java.time.LocalDate startOfWeek = now.minusDays(now.getDayOfWeek().getValue() - 1);
+
+		List<Issue> completed = issues.stream()
+				.filter(i -> "Done".equalsIgnoreCase(i.getJiraStatus()))
+				.filter(i -> i.getClosingDate() != null &&
+						!i.getClosingDate().isBefore(startOfWeek))
+				.toList();
+
+		if (completed.isEmpty()) {
+			return "No tickets completed this week.";
+		}
+
+		StringBuilder sb = new StringBuilder("Completed this week:\n");
+		for (Issue i : completed) {
+			sb.append(i.getJiraIssueKey())
+					.append(" - ")
+					.append(i.getTitle())
+					.append("\n");
+		}
+
+		return sb.toString();
+	}
+	public String getBlockedTickets() {
+
+		List<Issue> issues = issueRepository.findAll();
+
+		List<Issue> blocked = issues.stream()
+				.filter(i -> "Blocked".equalsIgnoreCase(i.getJiraStatus()))
+				.toList();
+
+		if (blocked.isEmpty()) {
+			return "No blocked tickets.";
+		}
+
+		StringBuilder sb = new StringBuilder("Blocked tickets:\n");
+		for (Issue i : blocked) {
+			sb.append(i.getJiraIssueKey())
+					.append(" - ")
+					.append(i.getTitle())
+					.append("\n");
+		}
+
+		return sb.toString();
+	}
+
+	public String getHighPriorityIssues() {
+
+		List<Issue> issues = issueRepository.findAll();
+
+		List<Issue> high = issues.stream()
+				.filter(i -> i.getSeverity() != null && i.getSeverity() == 1)
+				.toList();
+
+		if (high.isEmpty()) {
+			return "No high priority issues.";
+		}
+
+		StringBuilder sb = new StringBuilder("High priority issues:\n");
+		for (Issue i : high) {
+			sb.append(i.getJiraIssueKey())
+					.append(" - ")
+					.append(i.getTitle())
+					.append("\n");
+		}
+
+		return sb.toString();
+	}
 }
