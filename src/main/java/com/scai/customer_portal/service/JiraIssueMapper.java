@@ -26,6 +26,16 @@ public class JiraIssueMapper {
 		return fields.path(fieldKey).path("emailAddress").asText(null);
 	}
 
+	public static String jiraUserAccountId(JsonNode fields, String fieldKey) {
+		String id = fields.path(fieldKey).path("accountId").asText(null);
+		return id != null && !id.isBlank() ? id.trim() : null;
+	}
+
+	public static String jiraUserDisplayName(JsonNode fields, String fieldKey) {
+		String n = fields.path(fieldKey).path("displayName").asText(null);
+		return n != null && !n.isBlank() ? n.trim() : null;
+	}
+
 	/**
 	 * Cron / background sync: status-like fields only. Does not touch customer/org, pod, env, module, category,
 	 * RCA, reporter, assignee, description, issue date, etc., so portal values are not replaced by Jira nulls/omissions.

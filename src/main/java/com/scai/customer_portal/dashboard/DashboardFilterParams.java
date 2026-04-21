@@ -12,6 +12,8 @@ import java.util.UUID;
 public record DashboardFilterParams(
 		List<UUID> organizationIds,
 		List<UUID> assigneeIds,
+		/** Delivery SPOC by portal user id and/or by email (Jira assignee not linked to a portal user). */
+		List<String> assigneeEmails,
 		List<Integer> severities,
 		List<String> environments,
 		List<String> months,
@@ -22,6 +24,6 @@ public record DashboardFilterParams(
 		List<IssueStatus> portalStatuses
 ) {
 	public static DashboardFilterParams empty() {
-		return new DashboardFilterParams(null, null, null, null, null, null, null, null, null, null);
+		return new DashboardFilterParams(null, null, null, null, null, null, null, null, null, null, null);
 	}
 }
