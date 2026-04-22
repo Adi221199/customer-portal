@@ -20,6 +20,7 @@ public class RootController {
 		m.put("me", "GET /api/auth/me (Bearer token)");
 		m.put("issues", "GET /api/issues; POST import-jira; POST {id}/sync-from-jira (Bearer)");
 		m.put("dashboard", "GET /api/dashboard/meta|filters|charts/{path}|aggregate (Bearer)");
+		m.put("chat", "POST /api/chat — NVIDIA NIM assistant + NL dashboard filters (Bearer)");
 		return m;
 	}
 }
