@@ -30,6 +30,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.ArrayList;
+import java.time.LocalDate;
 import java.util.Comparator;
 import java.util.EnumSet;
 import java.util.Locale;
@@ -537,7 +538,10 @@ public class IssueService {
 		java.time.LocalDate startOfWeek = now.minusDays(now.getDayOfWeek().getValue() - 1);
 
 		List<Issue> completed = issues.stream()
-				.filter(i -> "Done".equalsIgnoreCase(i.getJiraStatus()))
+				.filter(i ->
+						"Done".equalsIgnoreCase(i.getJiraStatus()) ||
+								"Closed".equalsIgnoreCase(i.getJiraStatus())
+				)
 				.filter(i -> i.getClosingDate() != null &&
 						!i.getClosingDate().isBefore(startOfWeek))
 				.toList();
@@ -600,5 +604,118 @@ public class IssueService {
 		}
 
 		return sb.toString();
+	}
+
+	/** List-only: severity 3, same shape as high-priority (legacy; no per-user scoping in this helper). */
+	public String getLowPriorityIssues() {
+		List<Issue> issues = issueRepository.findAll();
+		List<Issue> list = issues.stream()
+				.filter(i -> i.getSeverity() != null && i.getSeverity() == 3)
+				.toList();
+		if (list.isEmpty()) {
+			return "No low priority issues.";
+		}
+		StringBuilder sb = new StringBuilder("Low priority issues:\n");
+		for (Issue i : list) {
+			sb.append(i.getJiraIssueKey()).append(" - ").append(i.getTitle()).append("\n");
+		}
+		return sb.toString();
+	}
+
+	@Transactional(readOnly = true)
+	public String formatChatIssueQuery(IssueQuerySpec spec) {
+		AppUser actor = currentUserService.requireCurrentUser();
+		List<Issue> issues = issueRepository.findAll(IssueVisibilitySpecification.visibleTo(actor));
+		List<Issue> out = issues.stream()
+				.filter(i -> issueMatchesQuery(i, spec))
+				.sorted(Comparator.comparing(Issue::getJiraIssueKey, Comparator.nullsLast(String::compareToIgnoreCase)))
+				.toList();
+		if (out.isEmpty()) {
+			return "No tickets match your request (within the issues you are allowed to see, with the current filters).";
+		}
+		StringBuilder sb = new StringBuilder();
+		sb.append("Matching tickets (").append(out.size()).append("):\n");
+		for (Issue i : out) {
+			String k = i.getJiraIssueKey() != null ? i.getJiraIssueKey() : "—";
+			sb.append(k)
+					.append(" — sev=")
+					.append(i.getSeverity() == null ? "—" : i.getSeverity().toString())
+					.append(" — ")
+					.append(i.getTitle() != null ? i.getTitle() : "");
+			if (i.getJiraStatus() != null) {
+				sb.append(" (").append(i.getJiraStatus()).append(")");
+			}
+			if (i.getIssueDate() != null) {
+				sb.append(" [issue ").append(i.getIssueDate()).append("]");
+			}
+			if (i.getClosingDate() != null) {
+				sb.append(" [close ").append(i.getClosingDate()).append("]");
+			}
+			sb.append("\n");
+		}
+		return sb.toString();
+	}
+
+	private static boolean dateInWindow(LocalDate d, IssueQuerySpec spec) {
+		if (d == null) {
+			return false;
+		}
+		if (!spec.hasTimeWindow() || spec.rangeStart() == null || spec.rangeEnd() == null) {
+			return true;
+		}
+		return !d.isBefore(spec.rangeStart()) && !d.isAfter(spec.rangeEnd());
+	}
+
+	/** Enforces the chat assistant’s structured issue filter. */
+	public static boolean issueMatchesQuery(Issue i, IssueQuerySpec spec) {
+		if (spec == null) {
+			return true;
+		}
+		if (spec.exactSeverity() != null) {
+			if (i.getSeverity() == null || !i.getSeverity().equals(spec.exactSeverity())) {
+				return false;
+			}
+		}
+		boolean closed = IssueProgressUtil.isEffectivelyClosed(i);
+		switch (spec.state()) {
+			case OPEN:
+				if (closed) {
+					return false;
+				}
+				break;
+			case CLOSED:
+				if (!closed) {
+					return false;
+				}
+				break;
+			default: /* ANY */
+		}
+		if (!spec.hasTimeWindow()) {
+			return true;
+		}
+		if (spec.windowApply() == IssueQuerySpec.WindowApply.NONE) {
+			return true;
+		}
+		if (spec.rangeStart() == null || spec.rangeEnd() == null) {
+			return true;
+		}
+		return switch (spec.windowApply()) {
+			case CLOSING -> {
+				if (i.getClosingDate() == null) {
+					yield false;
+				}
+				if (!dateInWindow(i.getClosingDate(), spec)) {
+					yield false;
+				}
+				if (spec.state() == IssueQuerySpec.State.CLOSED && !closed) {
+					yield false;
+				}
+				yield true;
+			}
+			case ISSUE -> i.getIssueDate() != null && dateInWindow(i.getIssueDate(), spec);
+			case EITHER -> (i.getIssueDate() != null && dateInWindow(i.getIssueDate(), spec))
+					|| (i.getClosingDate() != null && dateInWindow(i.getClosingDate(), spec));
+			case NONE -> true;
+		};
 	}
 }

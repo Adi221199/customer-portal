@@ -39,16 +39,19 @@ public class ChatService {
 	private final NvidiaNimService nvidiaNimService;
 	private final IssueService issueService;
 	private final DashboardService dashboardService;
+	private final TicketSummaryReportService ticketSummaryReportService;
 	private final ObjectMapper objectMapper;
 
 	public ChatService(
 			NvidiaNimService nvidiaNimService,
 			IssueService issueService,
 			DashboardService dashboardService,
+			TicketSummaryReportService ticketSummaryReportService,
 			ObjectMapper objectMapper) {
 		this.nvidiaNimService = nvidiaNimService;
 		this.issueService = issueService;
 		this.dashboardService = dashboardService;
+		this.ticketSummaryReportService = ticketSummaryReportService;
 		this.objectMapper = objectMapper;
 	}
 
@@ -74,10 +77,15 @@ public class ChatService {
 				  "ticket_status" — user asks status/details of a specific Jira key like DPAI-123 or EDM-3617
 				  "completed_this_week" — tickets completed this calendar week
 				  "blocked_tickets" — blocked tickets
-				  "high_priority" — severity 1 / critical / highest
+				  "low_priority" — ONLY a simple "show low priority" list; no time or closed-in-window. If they mention time or closed+days, use "issue_filter" instead
+				  "high_priority" — ONLY a simple "show high/critical priority" with NO time window; NOT if the user also says closed, day, week, month, "last 7", "in one day" — use "issue_filter" for those
+				  "issue_filter" — combined filters: priority + time + open/closed (e.g. highest ones closed in one day). You MUST return a "query" object
+				  "ticket_period_summary" — a metrics/report. Set "summaryPeriod" to match the user: last_1_day (one/1 day, 24h), this_week, last_7_days, this_month, last_30_days, last_month. Match their words; do not pick a random default
 				  "apply_dashboard_filters" — user wants to narrow or change dashboard data using slicers (client, SPOC, severity, environment, month, RCA, category, module, Jira key, portal status)
 				  "general" — anything else (greeting, how-to, unrelated)
+				- "query": for "issue_filter" only — { "priority": "1|2|3|high|low|any", "state": "open|closed|any", "window": "all|last_1_day|this_week|last_7_days|this_month|last_30_days|last_month", "dateFocus": "auto|issue|closing" (optional) }
 				- "ticketId": Jira key string or null (for ticket_status only)
+				- "summaryPeriod": for ticket_period_summary (required): last_1_day, this_week, last_7_days, this_month, last_30_days, last_month (align with the user)
 				- "dashboardFilters": object whose keys are exactly:
 				  organizationId, spocUserId, severity, environment, month, rca, category, module, jiraKey, portalStatus
 				  Each value is an array of strings (possibly empty). Use ONLY values that appear in the FACET CATALOG below.
@@ -90,7 +98,7 @@ public class ChatService {
 
 				CURRENT DASHBOARD FILTERS (JSON):
 				""" + currentJson + "\n\nFACET CATALOG (pick only from these; never invent UUIDs or keys):\n" + facetPrompt;
-		String raw = nvidiaNimService.chatCompletion(system, "User message:\n" + message, 1400, 0.15);
+		String raw = nvidiaNimService.chatCompletion(system, "User message:\n" + message, 1800, 0.12);
 		JsonNode node;
 		try {
 			node = objectMapper.readTree(extractJsonObject(raw));
@@ -101,6 +109,10 @@ public class ChatService {
 							+ e.getMessage() + ")");
 		}
 		String intent = node.path("intent").asText("general").trim().toLowerCase(Locale.ROOT);
+		String rawIntent = intent;
+		if ("high_priority".equals(intent) && IssueQuerySpecParser.shouldRerouteFromHighPriority(message)) {
+			intent = "issue_filter";
+		}
 		String ticketId = node.path("ticketId").asText(null);
 		if (ticketId != null && ticketId.isBlank()) {
 			ticketId = null;
@@ -130,8 +142,19 @@ public class ChatService {
 				String data = issueService.getBlockedTickets();
 				return ChatResponse.textOnly(aiReply.isEmpty() ? data : aiReply + "\n\n" + data);
 			}
+			case "low_priority" -> {
+				String data = issueService.getLowPriorityIssues();
+				return ChatResponse.textOnly(aiReply.isEmpty() ? data : aiReply + "\n\n" + data);
+			}
 			case "high_priority" -> {
 				String data = issueService.getHighPriorityIssues();
+				return ChatResponse.textOnly(aiReply.isEmpty() ? data : aiReply + "\n\n" + data);
+			}
+			case "issue_filter" -> {
+				boolean fromHp = "high_priority".equals(rawIntent)
+						&& IssueQuerySpecParser.shouldRerouteFromHighPriority(message);
+				IssueQuerySpec spec = IssueQuerySpecParser.parse(node.path("query"), message, fromHp);
+				String data = issueService.formatChatIssueQuery(spec);
 				return ChatResponse.textOnly(aiReply.isEmpty() ? data : aiReply + "\n\n" + data);
 			}
 			case "apply_dashboard_filters" -> {
@@ -146,6 +169,30 @@ public class ChatService {
 						? "Applied dashboard filters. Opening Analytics with your selections."
 						: aiReply;
 				return new ChatResponse(ack, merged, replace, true);
+			}
+			case "ticket_period_summary" -> {
+				String sp = node.path("summaryPeriod").asText("");
+				SummaryPeriod per = SummaryPeriod.forReport(sp, message);
+				String reportJson;
+				try {
+					reportJson = ticketSummaryReportService.buildReportJson(per);
+				}
+				catch (Exception e) {
+					return ChatResponse.textOnly(
+							"Could not build the ticket report right now. " + (e.getMessage() != null ? e.getMessage() : ""));
+				}
+				String timeNote = "Report window used: " + per.name() + " (inferred or from your message and model).";
+				String secondUser = timeNote + "\n\nUse the JSON below. The field timePeriod.end is the report \"as of\" date.\n\n" + reportJson;
+				String formatted;
+				try {
+					formatted = nvidiaNimService.chatCompletion(ticketReportSystemPrompt(), secondUser, 2800, 0.12);
+				}
+				catch (Exception e) {
+					return ChatResponse.textOnly(
+							"Report data was ready but formatting failed. Raw JSON (abbreviated):\n" + reportJson);
+				}
+				String out = (aiReply.isEmpty() ? "" : aiReply + "\n\n") + formatted.trim();
+				return ChatResponse.textOnly(out);
 			}
 			default -> {
 				if (!aiReply.isEmpty()) {
@@ -471,6 +518,50 @@ public class ChatService {
 			}
 		}
 		return t.trim();
+	}
+
+	private static String ticketReportSystemPrompt() {
+		return """
+				You are a support analytics writer. The user will receive a ticket summary for their portal. You are given a single JSON object (pretty-printed) with accurate counts and lists. Use ONLY that JSON. Do not invent ticket IDs, names, or numbers. If a count is 0, say 0. If a list is empty, say "None" or "No blocked tickets".
+
+				STRICT: Every numeric value, ticket key, and assignee label must come from the JSON. For "trend" under Activity, you may rephrase the provided activity.trendHint. For Key Insights and Recommendations, infer only from the data present (e.g. many blocked, uneven assignee load); do not add external facts.
+
+				Respond in English (or match the user if the JSON and instructions are clear). Use bullet points with leading "- ".
+
+				Output this exact section structure and emoji labels:
+
+				📊 Overall Summary:
+				- Total Tickets: (use overall.totalTickets)
+				- Closed Tickets: (use overall.closedTickets)
+				- Open Tickets: (use overall.openTickets)
+				- Closure Rate (%): (use overall.closureRatePercent)
+
+				📅 Activity:
+				- Tickets Created: (use activity.ticketsCreated — in the time window)
+				- Tickets Closed: (use activity.ticketsClosed — in the time window)
+				- Trend: (short, from activity.trendHint and numbers)
+
+				🚨 Priority Breakdown:
+				- High: (priorityBreakdown.high; severity 1 in portal)
+				- Medium: (priorityBreakdown.medium)
+				- Low: (priorityBreakdown.low)
+				(Optional fourth bullet only if priorityBreakdown.unspecified > 0) - Unspecified: (count)
+
+				⛔ Blocked Tickets:
+				- (list each id from blockedTicketIds, or "None")
+
+				👨‍💻 Assignee Performance:
+				- Assignee-wise closed in period: (from assigneeClosedInPeriod, each assignee: count; if empty say none closed in this period)
+				- Top performer: (use topPerformerHint verbatim or paraphrase without changing numbers)
+
+				⚡ Key Insights:
+				- 2–4 short bullets, data-backed only
+
+				📌 Recommendations:
+				- 2–3 actionable suggestions derived only from the JSON
+
+				If topPerformerHint or assignee data is empty, state that clearly. If truncatedTicketList is true, mention that the per-ticket list in JSON was limited for size (still the summary counts are full).
+				""";
 	}
 
 	private static String extractJsonObject(String raw) {
