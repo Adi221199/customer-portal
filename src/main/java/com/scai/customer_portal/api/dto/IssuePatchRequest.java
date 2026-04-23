@@ -1,5 +1,6 @@
 package com.scai.customer_portal.api.dto;
 
+import com.scai.customer_portal.domain.IssueStatus;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.Size;
@@ -9,6 +10,7 @@ import java.time.LocalDate;
 /**
  * Patch body: most fields are gap-fill (only applied when the stored value is still empty).
  * {@code rcaDescription} is the exception — it is applied whenever present so users can revise RCA text.
+ * {@code portalStatus} moves the customer workflow; allowed roles are enforced in the service.
  */
 public record IssuePatchRequest(
 		LocalDate closingDate,
@@ -17,6 +19,8 @@ public record IssuePatchRequest(
 		@Size(max = 200) String category,
 		@Min(1) @Max(3) Integer severity,
 		String rcaDescription,
-		@Size(max = 200) String organizationName
+		@Size(max = 200) String organizationName,
+		/** Open → Acknowledged → In Progress → Resolved → Closed */
+		IssueStatus portalStatus
 ) {
 }

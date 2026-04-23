@@ -121,4 +121,20 @@ public class Issue {
 
 	@Column(name = "jira_snapshot", columnDefinition = "text")
 	private String jiraSnapshotJson;
+
+	@Enumerated(EnumType.STRING)
+	@Column(
+			name = "issue_origin",
+			nullable = false,
+			columnDefinition = "varchar(32) default 'JIRA'")
+	@Builder.Default
+	private IssueOrigin issueOrigin = IssueOrigin.JIRA;
+
+	/** Shown in UI as reference when no Jira key; unique. Only set for {@link IssueOrigin#PORTAL}. */
+	@Column(name = "portal_reference", unique = true)
+	private String portalReference;
+
+	/** JSON array: attachment id, name, type, size, and internal stored file name. */
+	@Column(name = "attachments_json", columnDefinition = "text")
+	private String attachmentsJson;
 }

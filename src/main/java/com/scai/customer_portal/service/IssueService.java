@@ -6,11 +6,15 @@ import com.scai.customer_portal.api.dto.BulkImportOptionsResponse;
 import com.scai.customer_portal.api.dto.BulkJiraImportJobAcceptedResponse;
 import com.scai.customer_portal.api.dto.BulkJiraImportJobStatusResponse;
 import com.scai.customer_portal.api.dto.BulkJiraImportRequest;
+import com.scai.customer_portal.api.dto.CreateIssueRequest;
 import com.scai.customer_portal.api.dto.ImportJiraRequest;
+import com.scai.customer_portal.api.dto.IssueAttachmentInfo;
 import com.scai.customer_portal.api.dto.IssuePatchRequest;
 import com.scai.customer_portal.api.dto.IssueResponse;
 import com.scai.customer_portal.domain.AppUser;
 import com.scai.customer_portal.domain.Issue;
+import com.scai.customer_portal.domain.IssueOrigin;
+import com.scai.customer_portal.domain.IssueStatus;
 import com.scai.customer_portal.domain.Organization;
 import com.scai.customer_portal.config.DefaultInternalOrganizationBootstrap;
 import com.scai.customer_portal.domain.PortalRole;
@@ -28,13 +32,18 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.core.io.FileSystemResource;
+import org.springframework.core.io.Resource;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.nio.file.Files;
 import java.util.ArrayList;
+import java.io.IOException;
 import java.time.LocalDate;
 import java.util.Comparator;
 import java.util.EnumSet;
-import java.util.Locale;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
 
@@ -51,6 +60,8 @@ public class IssueService {
 	/** Bulk JQL import spans all Jira-matched orgs; only {@link PortalRole#SC_ADMIN} may run or load options. */
 	private static final Set<PortalRole> BULK_IMPORT_ROLES = EnumSet.of(PortalRole.SC_ADMIN);
 
+	private static final Set<PortalRole> PORTAL_CREATE_ROLES = EnumSet.of(PortalRole.CUSTOMER_USER, PortalRole.CUSTOMER_ADMIN);
+
 	private final IssueRepository issueRepository;
 	private final OrganizationRepository organizationRepository;
 	private final AppUserRepository appUserRepository;
@@ -61,6 +72,7 @@ public class IssueService {
 	private final TransactionTemplate requiresNewTx;
 	private final BulkJiraImportJobRegistry bulkJiraImportJobRegistry;
 	private final TaskExecutor bulkImportExecutor;
+	private final IssueAttachmentStorage issueAttachmentStorage;
 
 	public IssueService(
 			IssueRepository issueRepository,
@@ -72,7 +84,8 @@ public class IssueService {
 			ObjectMapper objectMapper,
 			PlatformTransactionManager transactionManager,
 			BulkJiraImportJobRegistry bulkJiraImportJobRegistry,
-			@Qualifier("bulkImportExecutor") TaskExecutor bulkImportExecutor) {
+			@Qualifier("bulkImportExecutor") TaskExecutor bulkImportExecutor,
+			IssueAttachmentStorage issueAttachmentStorage) {
 		this.issueRepository = issueRepository;
 		this.organizationRepository = organizationRepository;
 		this.appUserRepository = appUserRepository;
@@ -84,6 +97,7 @@ public class IssueService {
 		this.requiresNewTx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
 		this.bulkJiraImportJobRegistry = bulkJiraImportJobRegistry;
 		this.bulkImportExecutor = bulkImportExecutor;
+		this.issueAttachmentStorage = issueAttachmentStorage;
 	}
 
 	public boolean isJiraIntegrationConfigured() {
@@ -377,6 +391,88 @@ public class IssueService {
 				.toList();
 	}
 
+	/**
+	 * Customer-raised issue: same {@code issues} row as Jira imports; Jira key remains null, {@link IssueOrigin#PORTAL}
+	 * and a {@code portalReference} are set.
+	 */
+	@Transactional
+	public IssueResponse createPortalIssue(CreateIssueRequest req, List<MultipartFile> files) throws IOException {
+		AppUser actor = currentUserService.requireCurrentUser();
+		if (actor.getRoles().stream().noneMatch(PORTAL_CREATE_ROLES::contains)) {
+			throw new SecurityException("Not allowed to create issues in the portal");
+		}
+		if (actor.getOrganization() == null) {
+			throw new IllegalStateException("Your account must belong to an organization to raise an issue");
+		}
+		String portalRef = generateUniquePortalReference();
+		String mod = req.module() != null && !req.module().isBlank() ? req.module().trim() : "PORTAL";
+		Issue issue = Issue.builder()
+				.title(req.title().trim())
+				.description(req.description() != null ? req.description() : null)
+				.category(req.category() != null && !req.category().isBlank() ? req.category().trim() : null)
+				.severity(req.priority())
+				.environment(req.environment() != null && !req.environment().isBlank() ? req.environment().trim() : null)
+				.module(mod)
+				.issueDate(LocalDate.now())
+				.jiraStatus(PortalIssueStatusWorkflow.jiraStyleLabel(IssueStatus.OPEN))
+				.portalStatus(IssueStatus.OPEN)
+				.issueOrigin(IssueOrigin.PORTAL)
+				.portalReference(portalRef)
+				.organization(actor.getOrganization())
+				.portalReporter(actor)
+				.jiraReporterEmail(actor.getEmail() != null ? actor.getEmail().trim() : null)
+				.jiraReporterDisplayName(actor.getDisplayName() != null ? actor.getDisplayName() : null)
+				.createdBy(actor)
+				.build();
+		issue = issueRepository.save(issue);
+		String json;
+		try {
+			json = issueAttachmentStorage.saveAndSerialize(issue.getId(), files == null ? List.of() : files);
+		}
+		catch (Exception e) {
+			issueRepository.delete(issue);
+			if (e instanceof IOException) {
+				throw (IOException) e;
+			}
+			throw new IllegalStateException(e.getMessage() != null ? e.getMessage() : "Failed to store attachments", e);
+		}
+		issue.setAttachmentsJson(json);
+		issue = issueRepository.save(issue);
+		return toResponse(issue);
+	}
+
+	@Transactional(readOnly = true)
+	public Resource loadAttachmentResource(UUID issueId, UUID fileId) {
+		AppUser actor = currentUserService.requireCurrentUser();
+		Issue issue = issueRepository.findById(issueId)
+				.orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Issue not found"));
+		if (!canView(actor, issue)) {
+			throw new SecurityException("Not allowed to read this issue");
+		}
+		var path = issueAttachmentStorage.resolveStoredFile(issueId, fileId, issue.getAttachmentsJson());
+		if (path == null || !Files.isRegularFile(path)) {
+			throw new ResponseStatusException(HttpStatus.NOT_FOUND, "File not found");
+		}
+		return new FileSystemResource(path);
+	}
+
+	@Transactional(readOnly = true)
+	public String attachmentContentType(UUID issueId, UUID fileId) {
+		Issue issue = issueRepository.findById(issueId)
+				.orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Issue not found"));
+		return issueAttachmentStorage.contentTypeForDownload(issueId, fileId, issue.getAttachmentsJson());
+	}
+
+	private String generateUniquePortalReference() {
+		for (int k = 0; k < 8; k++) {
+			String ref = "PORTAL-" + UUID.randomUUID().toString().replace("-", "").substring(0, 8).toUpperCase(Locale.ROOT);
+			if (issueRepository.findByPortalReference(ref).isEmpty()) {
+				return ref;
+			}
+		}
+		return "PORTAL-" + UUID.randomUUID();
+	}
+
 	private boolean canView(AppUser actor, Issue issue) {
 		return issueRepository.exists(Specification.<Issue>where((root, q, cb) -> cb.equal(root.get("id"), issue.getId()))
 				.and(IssueVisibilitySpecification.visibleTo(actor)));
@@ -424,7 +520,34 @@ public class IssueService {
 		if (request.rcaDescription() != null) {
 			issue.setRcaDescription(blankToNull(request.rcaDescription()));
 		}
+		if (request.portalStatus() != null) {
+			if (!canUpdatePortalStatus(actor, issue)) {
+				throw new SecurityException("Not allowed to change workflow status");
+			}
+			PortalIssueStatusWorkflow.validateTransition(actor, issue.getPortalStatus(), request.portalStatus());
+			issue.setPortalStatus(request.portalStatus());
+			issue.setJiraStatus(PortalIssueStatusWorkflow.jiraStyleLabel(request.portalStatus()));
+			PortalIssueStatusWorkflow.setClosingDateWhenClosed(issue);
+		}
 		return toResponse(issueRepository.save(issue));
+	}
+
+	private boolean canUpdatePortalStatus(AppUser actor, Issue issue) {
+		if (actor.getRoles().contains(PortalRole.SC_ADMIN)) {
+			return true;
+		}
+		if (actor.getRoles().contains(PortalRole.SC_LEAD) && canView(actor, issue)) {
+			return true;
+		}
+		if (actor.getRoles().contains(PortalRole.SC_AGENT) && canView(actor, issue)) {
+			return true;
+		}
+		if (actor.getRoles().contains(PortalRole.CUSTOMER_ADMIN)
+				&& actor.getOrganization() != null
+				&& issue.getOrganization().getId().equals(actor.getOrganization().getId())) {
+			return true;
+		}
+		return false;
 	}
 
 	private void applyOrganizationNameIfSlotOpen(Issue issue, String name) {
@@ -487,10 +610,14 @@ public class IssueService {
 				: (i.getJiraAssigneeDisplayName() != null && !i.getJiraAssigneeDisplayName().isBlank()
 						? i.getJiraAssigneeDisplayName()
 						: null);
+		List<IssueAttachmentInfo> atts = issueAttachmentStorage.toPublicList(i.getAttachmentsJson());
+		IssueOrigin origin = i.getIssueOrigin() != null ? i.getIssueOrigin() : IssueOrigin.JIRA;
 		return new IssueResponse(
 				i.getId(),
 				i.getJiraIssueKey(),
 				i.getJiraIssueId(),
+				i.getPortalReference(),
+				origin,
 				i.getTitle(),
 				i.getDescription(),
 				i.getIssueDate(),
@@ -502,6 +629,7 @@ public class IssueService {
 				i.getRcaDescription(),
 				i.getJiraStatus(),
 				i.getPortalStatus(),
+				atts,
 				i.getOrganization().getId(),
 				i.getOrganization().getName(),
 				i.getAssignee() != null ? i.getAssignee().getId() : null,

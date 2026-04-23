@@ -16,6 +16,8 @@ public interface IssueRepository extends JpaRepository<Issue, UUID>, JpaSpecific
 
 	Optional<Issue> findByJiraIssueKey(String jiraIssueKey);
 
+	Optional<Issue> findByPortalReference(String portalReference);
+
 	@Query("select i.id from Issue i where i.jiraIssueKey is not null")
 	List<UUID> findAllIdsWithJiraIssueKey();
 
